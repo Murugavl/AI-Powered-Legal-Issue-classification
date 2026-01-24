@@ -1,0 +1,35 @@
+# General
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# Frontend (Node/React)
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+frontend/npm-debug.log*
+frontend/yarn-debug.log*
+frontend/yarn-error.log*
+
+# Backend (Java/Spring Boot)
+backend-java/target/
+backend-java/.mvn/
+backend-java/mvnw
+backend-java/mvnw.cmd
+backend-java/*.class
+backend-java/*.jar
+backend-java/*.war
+backend-java/.classpath
+backend-java/.project
+backend-java/.settings/
+
+# NLP Service (Python)
+nlp-python/__pycache__/
+nlp-python/*.py[cod]
+nlp-python/*$py.class
+nlp-python/venv/
+nlp-python/.env
+nlp-python/.pytest_cache/
