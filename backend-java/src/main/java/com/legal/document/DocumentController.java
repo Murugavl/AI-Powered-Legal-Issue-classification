@@ -33,10 +33,23 @@ public class DocumentController {
         return ResponseEntity.ok(response);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired
+    private PdfGeneratorService pdfGeneratorService;
+
     @PostMapping("/generate")
-    public ResponseEntity<String> generatePdf(@RequestBody Map<String, Object> data) {
-        // Placeholder for PDF generation
-        // 'NOT LEGAL ADVICE' disclaimer will be added here
-        return ResponseEntity.ok("PDF Generated (Stub)");
+    public ResponseEntity<byte[]> generatePdf(@RequestBody Map<String, String> data) {
+        String englishText = data.getOrDefault("englishText", "");
+        String localText = data.getOrDefault("localText", "");
+
+        byte[] pdf = pdfGeneratorService.generateBilingualPdf(englishText, localText);
+
+        if (pdf == null) {
+            return ResponseEntity.internalServerError().build();
+        }
+
+        return ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=document.pdf")
+                .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
+                .body(pdf);
     }
 }
