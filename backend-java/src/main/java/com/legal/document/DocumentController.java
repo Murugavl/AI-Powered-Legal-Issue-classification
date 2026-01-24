@@ -11,23 +11,43 @@ import java.util.HashMap;
 public class DocumentController {
 
     @PostMapping("/verify")
-    public ResponseEntity<Map<String, Object>> verifyDocument(@RequestBody DocumentRequest request) {
-        // Mocking the call to NLP service for now, or we can use RestTemplate to call
-        // localhost:8000
-        // For prototype, we'll assume we receive the text and mock the extraction if
-        // the Python service isn't reachable yet
-        // In full integration, verifyDocument implies calling Python to get entities.
+    public ResponseEntity<Map<String, Object>> verifyDocument(@RequestBody Map<String, Object> payload) {
+        String text = (String) payload.get("text");
+        Map<String, Object> entities = (Map<String, Object>) payload.get("entities");
 
-        // Let's stub the response assuming we will integrate with Python later
         Map<String, Object> response = new HashMap<>();
-        response.put("status", "pending_verification");
-        response.put("originalText", request.getText());
+        response.put("originalText", text);
 
-        // Check for high-risk keywords (redundant buffer, usually done in frontend or
-        // NLP)
-        if (request.getText() != null && (request.getText().toLowerCase().contains("kill")
-                || request.getText().toLowerCase().contains("suicide"))) {
+        // Strict Verification Logic
+        Map<String, String> missingFields = new HashMap<>();
+        if (entities == null) {
+            response.put("status", "FAILED");
+            response.put("error", "No entities provided");
+            return ResponseEntity.ok(response);
+        }
+
+        if (entities.get("name") == null || entities.get("name").toString().isEmpty())
+            missingFields.put("name", "Name is required");
+        if (entities.get("date") == null || entities.get("date").toString().isEmpty())
+            missingFields.put("date", "Incident Date is required");
+        if (entities.get("location") == null || entities.get("location").toString().isEmpty())
+            missingFields.put("location", "Location is required");
+        // Accused might be optional in some complaints (e.g. unknown suspect), but
+        // let's warn
+        if (entities.get("accused") == null || entities.get("accused").toString().isEmpty())
+            missingFields.put("accused", "Accused details missing (optional)");
+
+        if (!missingFields.isEmpty()) {
+            response.put("status", "INCOMPLETE");
+            response.put("missingFields", missingFields);
+        } else {
+            response.put("status", "READY");
+        }
+
+        // High Risk Check
+        if (text != null && (text.toLowerCase().contains("kill") || text.toLowerCase().contains("suicide"))) {
             response.put("alert", "HIGH_RISK_DETECTED");
+            response.put("status", "BLOCKED");
         }
 
         return ResponseEntity.ok(response);

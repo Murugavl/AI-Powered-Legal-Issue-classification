@@ -40,6 +40,12 @@ def analyze_text(request: DocumentRequest):
     # Regex-based extraction
     import re
     
+    # Initialize variables to avoid UnboundLocalError
+    name = None
+    date = None
+    location = None
+    accused = None
+
     # Name: simple heuristic, looks for "Name: X" or "I am X"
     name_match = re.search(r"(?:Name|I am|My name is)\s*[:\-]?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)", text, re.IGNORECASE)
     if name_match:
@@ -69,6 +75,17 @@ def analyze_text(request: DocumentRequest):
             accused=accused
         )
     )
+
+class TranslationRequest(BaseModel):
+    text: str
+    target_language: str
+
+@app.post("/translate")
+def translate_text(request: TranslationRequest):
+    # Mock Translation Logic for Prototype
+    # In production, this would call Bhashini API
+    translated_text = f"[Translated to {request.target_language}]: {request.text}"
+    return {"translated_text": translated_text}
 
 if __name__ == "__main__":
     import uvicorn

@@ -47,61 +47,91 @@ function App() {
     setLoading(true);
     setAlert(null);
     try {
-      // First try to check high-risk keywords strictly on frontend (optional, but requested)
+      // Step 1: Frontend Risk Check
       if (text.toLowerCase().includes('kill') || text.toLowerCase().includes('suicide') || text.toLowerCase().includes('bomb')) {
         setAlert("HIGH RISK DETECTED: CALL 112 IMMEDIATELY");
         setLoading(false);
         return;
       }
 
-      // Call Python Service for Analysis (Mocked via direct call or through Java backend if proxied)
-      // For this architecture, we call Python directly or via Backend. 
-      // User requested: "Implement Spring Orchestrator... determining missing fields from NLP service"
-      // So we should call Java Backend which calls NLP.
-      // Assuming Java Backend is at localhost:8080/api/documents/verify
-
-      // However, Java mock implementations currently just echo. 
-      // We'll simulate the extraction here for the prototype if backend isn't fully proxying yet, 
-      // or actually call the NLP service directly if CORS allows.
-
-      // Let's call Python NLP directly to show it works, then Java for "Loop".
-      // Or stick to the plan: React -> Java -> Python.
-      // But since Java is minimal, let's try React -> NLP (for demo) or keep it simple.
-
-      // Actually, let's call the Python NLP service directly to populate the UI, 
-      // then call Java to "Generate" or "Verify".
-
-      const response = await fetch('http://localhost:8000/analyze', {
+      // Step 2: NLP Analysis (Extraction)
+      const nlpResponse = await fetch('http://localhost:8000/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
       });
 
-      if (response.ok) {
-        const data = await response.json();
+      let extractedEntities = {};
+      if (nlpResponse.ok) {
+        const data = await nlpResponse.json();
         setLanguage(data.language);
         setEntities(data.entities);
+        extractedEntities = data.entities;
       } else {
         console.error("NLP Service Failed");
+        extractedEntities = { name: null, date: null, location: null, accused: null };
+      }
+
+      // Step 3: Backend Verification Loop
+      const verifyResponse = await fetch('http://localhost:8080/api/documents/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: text,
+          entities: extractedEntities
+        })
+      });
+
+      if (verifyResponse.ok) {
+        const verifyData = await verifyResponse.json();
+        if (verifyData.status === "INCOMPLETE") {
+          // Show alerts for missing fields?
+          // For now, we rely on the visual missing fields in the entities-grid.
+          console.log("Missing Fields:", verifyData.missingFields);
+        }
+        if (verifyData.alert) {
+          setAlert(verifyData.alert);
+        }
       }
 
     } catch (e) {
-      console.error(e);
-      // Fallback for demo
-      setEntities({ name: "Unknown", date: "Unknown", location: "Unknown" });
+      console.error("Verification Error:", e);
+      if (e.message && e.message.includes('Failed to fetch')) {
+        setAlert("Backend Service Unavailable (Is Java running?). Showing NLP results only.");
+      }
     }
     setLoading(false);
   };
 
+  const translateText = async (targetLang) => {
+    try {
+      const response = await fetch('http://localhost:8000/translate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, target_language: targetLang })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // Show in a customized alert or modal in production
+        alert(`Translation (${targetLang}):\n${data.translated_text}`);
+      }
+    } catch (e) {
+      console.error("Translation Error:", e);
+      alert("Translation Service Unavailable");
+    }
+  };
+
   const generatePdf = async () => {
-    // Call Java Backend
+    // Only allow if no alert?
+    if (alert && alert.includes("HIGH RISK")) return; // Block high risk
+
     try {
       const response = await fetch('http://localhost:8080/api/documents/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           englishText: text,
-          localText: text + " (Translated stub)" // In real app, we'd translate
+          localText: text + " \n(Translated Content Pending)"
         })
       });
 
@@ -112,9 +142,12 @@ function App() {
         a.href = url;
         a.download = "legal_doc.pdf";
         a.click();
+      } else {
+        alert("Backend failed to generate PDF. Setup Java Backend.");
       }
     } catch (e) {
       console.error(e);
+      alert("Backend Unreachable: Cannot generate PDF.");
     }
   };
 
@@ -171,7 +204,11 @@ function App() {
             </div>
           </div>
 
-          <div style={{ marginTop: '2rem' }}>
+          <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+            <button onClick={() => translateText('en')} style={{ background: '#334155' }}>Translate to English</button>
+            <button onClick={() => translateText('ta')} style={{ background: '#334155' }}>Translate to Tamil</button>
+            <button onClick={() => translateText('hi')} style={{ background: '#334155' }}>Translate to Hindi</button>
+
             <button className="primary" onClick={generatePdf}>
               📄 Generate Bilingual PDF
             </button>
