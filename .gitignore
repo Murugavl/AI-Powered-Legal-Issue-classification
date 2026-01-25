@@ -33,3 +33,9 @@ nlp-python/*$py.class
 nlp-python/venv/
 nlp-python/.env
 nlp-python/.pytest_cache/
+
+# H2 database runtime files
+*.mv.db
+*.lock.db
+*.trace.db
+backend-java/data/

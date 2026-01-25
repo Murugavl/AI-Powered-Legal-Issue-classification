@@ -28,55 +28,29 @@ function Dashboard() {
     }
   };
 
-  const handleNewCase = () => {
-    navigate('/new-case');
-  };
+  const handleNewCase = () => navigate('/new-case');
+  const handleViewCase = (caseId) => navigate(`/case/${caseId}`);
 
-  const handleViewCase = (caseId) => {
-    navigate(`/case/${caseId}`);
-  };
-
-  const getStatusColor = (status) => {
+  const getStatusLabel = (status) => {
     switch (status) {
-      case 'completed':
-        return '#4caf50';
-      case 'ready':
-        return '#2196f3';
-      case 'in_progress':
-        return '#ff9800';
-      case 'draft':
-        return '#9e9e9e';
-      default:
-        return '#757575';
-    }
-  };
-
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'completed':
-        return '✓';
-      case 'ready':
-        return '📄';
-      case 'in_progress':
-        return '⏳';
-      case 'draft':
-        return '✏️';
-      default:
-        return '📋';
+      case 'completed': return 'Completed';
+      case 'ready': return 'Analysis Ready';
+      case 'in_progress': return 'In Progress';
+      default: return 'Draft';
     }
   };
 
   return (
     <div className="dashboard">
-      <header className="dashboard-header">
+      <header className="dashboard-header glass-card">
         <div className="header-content">
-          <div>
-            <h1>Welcome, {user?.fullName || 'User'}!</h1>
-            <p className="header-subtitle">Manage your legal document cases</p>
+          <div className="user-welcome">
+            <h1>Hello, {user?.fullName || 'Counsel'}</h1>
+            <p className="header-subtitle">Your Case Management Console</p>
           </div>
           <div className="header-actions">
             <button onClick={handleNewCase} className="btn btn-primary">
-              + New Case
+              <span className="icon-plus">+</span> New Case
             </button>
             <button onClick={logout} className="btn btn-secondary">
               Logout
@@ -85,9 +59,9 @@ function Dashboard() {
         </div>
       </header>
 
-      <div className="dashboard-content">
+      <div className="dashboard-content section-padding">
         {error && (
-          <div className="alert alert-error">
+          <div className="alert-box">
             {error}
           </div>
         )}
@@ -95,13 +69,13 @@ function Dashboard() {
         {loading ? (
           <div className="loading-container">
             <div className="spinner"></div>
-            <p>Loading your cases...</p>
+            <p className="text-muted">Retrieving your legal brief...</p>
           </div>
         ) : cases.length === 0 ? (
-          <div className="empty-state">
-            <div className="empty-icon">📋</div>
-            <h2>No cases yet</h2>
-            <p>Create your first legal document case to get started</p>
+          <div className="empty-state glass-card">
+            <div className="empty-icon">📂</div>
+            <h2>No Cases Found</h2>
+            <p>Start your first legal consultation by clicking 'New Case'.</p>
             <button onClick={handleNewCase} className="btn btn-primary">
               Create New Case
             </button>
@@ -111,38 +85,37 @@ function Dashboard() {
             {cases.map((caseItem) => (
               <div
                 key={caseItem.caseId}
-                className="case-card"
+                className="case-card glass-card"
                 onClick={() => handleViewCase(caseItem.caseId)}
               >
                 <div className="case-header">
-                  <div
-                    className="case-status"
-                    style={{ background: getStatusColor(caseItem.status) }}
-                  >
-                    <span className="status-icon">{getStatusIcon(caseItem.status)}</span>
-                    <span className="status-text">{caseItem.status}</span>
-                  </div>
-                  <span className="case-ref">{caseItem.referenceNumber}</span>
+                  <span className={`status-badge status-${caseItem.status}`}>
+                    {getStatusLabel(caseItem.status)}
+                  </span>
+                  <span className="case-ref">#{caseItem.referenceNumber.substring(0, 8)}...</span>
                 </div>
 
                 <div className="case-body">
-                  <h3>{caseItem.subCategory?.replace('_', ' ').toUpperCase()}</h3>
+                  <h3 className="case-title">{caseItem.subCategory?.replace('_', ' ')}</h3>
                   <p className="case-type">{caseItem.issueType?.replace('_', ' ')}</p>
 
-                  {caseItem.suggestedAuthority && (
-                    <p className="case-authority">
-                      <strong>Authority:</strong> {caseItem.suggestedAuthority}
-                    </p>
-                  )}
+                  <div className="meta-info">
+                    {caseItem.suggestedAuthority && (
+                      <div className="meta-item">
+                        <span className="label">Authority</span>
+                        <span className="value">{caseItem.suggestedAuthority}</span>
+                      </div>
+                    )}
+                  </div>
 
                   <div className="case-progress">
                     <div className="progress-label">
-                      <span>Completeness</span>
+                      <span>Analysis Completeness</span>
                       <span>{Math.round((caseItem.completeness || 0) * 100)}%</span>
                     </div>
-                    <div className="progress-bar-small">
+                    <div className="progress-track">
                       <div
-                        className="progress-fill-small"
+                        className="progress-fill"
                         style={{ width: `${(caseItem.completeness || 0) * 100}%` }}
                       ></div>
                     </div>
@@ -151,8 +124,9 @@ function Dashboard() {
 
                 <div className="case-footer">
                   <span className="case-date">
-                    Created: {new Date(caseItem.createdAt).toLocaleDateString()}
+                    Opened: {new Date(caseItem.createdAt).toLocaleDateString()}
                   </span>
+                  <span className="arrow-icon">→</span>
                 </div>
               </div>
             ))}

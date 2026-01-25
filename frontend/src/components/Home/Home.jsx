@@ -15,109 +15,92 @@ function Home() {
 
   return (
     <div className="home">
-      <div className="home-header">
-        <div className="header-content">
-          <h1>Legal Document Assistant</h1>
-          <p>Voice-First Legal Documentation for Everyone</p>
+      {/* Navbar Placeholder */}
+      <nav className="navbar glass-card">
+        <div className="logo-container">
+          <img src="/satta_vizhi_logo.png" alt="Satta Vizhi Logo" className="logo-img" />
+          <span className="logo-text text-gradient">Satta Vizhi</span>
         </div>
-      </div>
+        <div className="nav-links">
+          <button onClick={() => navigate('/login')} className="btn btn-secondary">Login</button>
+          <button onClick={() => navigate('/register')} className="btn btn-primary">Get Started</button>
+        </div>
+      </nav>
 
-      <div className="home-content">
+      <div className="home-content section-padding">
         <section className="hero">
-          <h2>Access Justice in Your Language</h2>
-          <p className="hero-subtitle">
-            Create legally structured, authority-ready documents through simple voice or text input
-          </p>
-          <div className="cta-buttons">
-            <button onClick={() => navigate('/register')} className="btn btn-primary btn-large">
-              Get Started Free
-            </button>
-            <button onClick={() => navigate('/login')} className="btn btn-secondary btn-large">
-              Login
-            </button>
-          </div>
-        </section>
-
-        <section className="features">
-          <h3>How It Works</h3>
-          <div className="features-grid">
-            <div className="feature-card">
-              <div className="feature-icon">🎙️</div>
-              <h4>1. Speak or Type</h4>
-              <p>Describe your legal issue in your own language using voice or text input</p>
-            </div>
-
-            <div className="feature-card">
-              <div className="feature-icon">💬</div>
-              <h4>2. Interactive Q&A</h4>
-              <p>Answer simple questions one at a time. We guide you through the process</p>
-            </div>
-
-            <div className="feature-card">
-              <div className="feature-icon">✓</div>
-              <h4>3. Review & Confirm</h4>
-              <p>Check all details are correct before we generate your document</p>
-            </div>
-
-            <div className="feature-card">
-              <div className="feature-icon">📄</div>
-              <h4>4. Download Document</h4>
-              <p>Get your bilingual, authority-ready document with reference number</p>
-            </div>
-          </div>
-        </section>
-
-        <section className="benefits">
-          <h3>Why Use Our Platform?</h3>
-          <div className="benefits-list">
-            <div className="benefit-item">
-              <span className="benefit-icon">🌍</span>
-              <div>
-                <h5>Multilingual Support</h5>
-                <p>English, Hindi, Tamil, Telugu, Bengali, Marathi and more</p>
-              </div>
-            </div>
-
-            <div className="benefit-item">
-              <span className="benefit-icon">🔒</span>
-              <div>
-                <h5>Secure & Private</h5>
-                <p>Your data is encrypted and stored securely</p>
-              </div>
-            </div>
-
-            <div className="benefit-item">
-              <span className="benefit-icon">⚡</span>
-              <div>
-                <h5>Fast & Easy</h5>
-                <p>Create documents in minutes, not hours</p>
-              </div>
-            </div>
-
-            <div className="benefit-item">
-              <span className="benefit-icon">📱</span>
-              <div>
-                <h5>Mobile Friendly</h5>
-                <p>Works on any device - phone, tablet, or computer</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section className="disclaimer-section">
-          <div className="disclaimer-box">
-            <h4>⚠️ Important Disclaimer</h4>
-            <p>
-              This application provides document templates and assistance only. It does NOT
-              provide legal advice. All generated documents should be reviewed by a qualified
-              legal professional before submission to authorities.
+          <div className="hero-text">
+            <h1 className="hero-title">
+              Legal Documentation <br />
+              <span className="text-gradient">Simplified for Everyone</span>
+            </h1>
+            <p className="hero-subtitle">
+              Transform your voice into authority-ready legal documents in minutes.
+              Multilingual, secure, and accessible justice powered by AI.
             </p>
+            <div className="cta-buttons">
+              <button onClick={() => navigate('/register')} className="btn btn-primary btn-lg">
+                Start Your Case Free
+              </button>
+              <button onClick={() => navigate('/login')} className="btn btn-secondary btn-lg">
+                Existing User
+              </button>
+            </div>
+          </div>
+          <div className="hero-visual">
+            {/* Abstract visual element */}
+            <div className="glowing-orb"></div>
+          </div>
+        </section>
+
+        <section className="features-section">
+          <h2 className="section-title">How It Works</h2>
+          <div className="features-grid">
+            <div className="feature-card glass-card">
+              <div className="icon-wrapper">🎙️</div>
+              <h3>1. Speak Naturally</h3>
+              <p>Describe your issue in your own language using voice or text. No legal jargon needed.</p>
+            </div>
+
+            <div className="feature-card glass-card">
+              <div className="icon-wrapper">🤖</div>
+              <h3>2. AI Analysis</h3>
+              <p>Our intelligent system extracts key details like dates, names, and locations automatically.</p>
+            </div>
+
+            <div className="feature-card glass-card">
+              <div className="icon-wrapper">📄</div>
+              <h3>3. Instant Document</h3>
+              <p>Receive a perfectly formatted, legally structured document ready for submission.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="trust-section">
+          <div className="trust-grid">
+            <div className="trust-item">
+              <h3>10+</h3>
+              <p>Languages Supported</p>
+            </div>
+            <div className="trust-item">
+              <h3>Encryption</h3>
+              <p>Enterprise Grade</p>
+            </div>
+            <div className="trust-item">
+              <h3>24/7</h3>
+              <p>Instant Access</p>
+            </div>
           </div>
         </section>
       </div>
 
-      <footer className="home-footer">
-        <p>Built with ❤️ for accessible justice in India</p>
+      <footer className="footer section-padding">
+        <div className="footer-content">
+          <p className="copyright">© 2026 JurisAI. All rights reserved.</p>
+          <p className="disclaimer-text">
+            Disclaimer: This platform provides automated document templates and is not a substitute for professional legal advice.
+          </p>
+        </div>
       </footer>
     </div>
   );
