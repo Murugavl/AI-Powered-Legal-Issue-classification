@@ -1,5 +1,7 @@
 fastapi
-uvicorn
+uvicorn[standard]
 langdetect
 spacy
 pydantic
+python-multipart
+httpx
