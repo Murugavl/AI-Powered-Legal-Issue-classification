@@ -4,23 +4,28 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 
-public class RegisterRequest {
+public class AuthResponse {
+    private String token;
     private String phoneNumber;
-    private String email;
     private String fullName;
-    private String password;
     private String preferredLanguage;
 
-    public RegisterRequest() {
+    public AuthResponse() {
     }
 
-    public RegisterRequest(String phoneNumber, String email, String fullName, String password,
-            String preferredLanguage) {
+    public AuthResponse(String token, String phoneNumber, String fullName, String preferredLanguage) {
+        this.token = token;
         this.phoneNumber = phoneNumber;
-        this.email = email;
         this.fullName = fullName;
-        this.password = password;
         this.preferredLanguage = preferredLanguage;
+    }
+
+    public String getToken() {
+        return token;
+    }
+
+    public void setToken(String token) {
+        this.token = token;
     }
 
     public String getPhoneNumber() {
@@ -31,28 +36,12 @@ public class RegisterRequest {
         this.phoneNumber = phoneNumber;
     }
 
-    public String getEmail() {
-        return email;
-    }
-
-    public void setEmail(String email) {
-        this.email = email;
-    }
-
     public String getFullName() {
         return fullName;
     }
 
     public void setFullName(String fullName) {
         this.fullName = fullName;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
     }
 
     public String getPreferredLanguage() {

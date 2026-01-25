@@ -1,61 +1,39 @@
-package com.legal.document.entity;
+package com.legal.document.dto;
 
-import jakarta.persistence.*;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
 import java.time.LocalDateTime;
+import java.util.Map;
 
-@Entity
-@Table(name = "legal_cases")
-public class LegalCase {
-
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
-    @Column(name = "case_id")
+public class CaseResponse {
     private Long caseId;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "user_id", nullable = false)
-    private User user;
-
-    @Column(name = "reference_number", unique = true, nullable = false, length = 50)
     private String referenceNumber;
-
-    @Column(name = "issue_type", nullable = false, length = 50)
     private String issueType;
-
-    @Column(name = "sub_category", nullable = false, length = 50)
     private String subCategory;
-
-    @Column(name = "status", length = 30)
-    private String status = "draft";
-
-    @Column(name = "suggested_authority", length = 200)
+    private String status;
     private String suggestedAuthority;
-
-    @Column(name = "created_at", nullable = false, updatable = false)
+    private Map<String, EntityInfo> entities;
+    private Double completeness;
     private LocalDateTime createdAt;
-
-    @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @Column(name = "completed_at")
-    private LocalDateTime completedAt;
-
-    public LegalCase() {
+    public CaseResponse() {
     }
 
-    public LegalCase(Long caseId, User user, String referenceNumber, String issueType, String subCategory,
-            String status, String suggestedAuthority, LocalDateTime createdAt, LocalDateTime updatedAt,
-            LocalDateTime completedAt) {
+    public CaseResponse(Long caseId, String referenceNumber, String issueType, String subCategory, String status,
+            String suggestedAuthority, Map<String, EntityInfo> entities, Double completeness, LocalDateTime createdAt,
+            LocalDateTime updatedAt) {
         this.caseId = caseId;
-        this.user = user;
         this.referenceNumber = referenceNumber;
         this.issueType = issueType;
         this.subCategory = subCategory;
         this.status = status;
         this.suggestedAuthority = suggestedAuthority;
+        this.entities = entities;
+        this.completeness = completeness;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
-        this.completedAt = completedAt;
     }
 
     public Long getCaseId() {
@@ -64,14 +42,6 @@ public class LegalCase {
 
     public void setCaseId(Long caseId) {
         this.caseId = caseId;
-    }
-
-    public User getUser() {
-        return user;
-    }
-
-    public void setUser(User user) {
-        this.user = user;
     }
 
     public String getReferenceNumber() {
@@ -114,6 +84,22 @@ public class LegalCase {
         this.suggestedAuthority = suggestedAuthority;
     }
 
+    public Map<String, EntityInfo> getEntities() {
+        return entities;
+    }
+
+    public void setEntities(Map<String, EntityInfo> entities) {
+        this.entities = entities;
+    }
+
+    public Double getCompleteness() {
+        return completeness;
+    }
+
+    public void setCompleteness(Double completeness) {
+        this.completeness = completeness;
+    }
+
     public LocalDateTime getCreatedAt() {
         return createdAt;
     }
@@ -130,22 +116,42 @@ public class LegalCase {
         this.updatedAt = updatedAt;
     }
 
-    public LocalDateTime getCompletedAt() {
-        return completedAt;
-    }
+    public static class EntityInfo {
+        private String value;
+        private Boolean confirmed;
+        private Double confidence;
 
-    public void setCompletedAt(LocalDateTime completedAt) {
-        this.completedAt = completedAt;
-    }
+        public EntityInfo() {
+        }
 
-    @PrePersist
-    protected void onCreate() {
-        createdAt = LocalDateTime.now();
-        updatedAt = LocalDateTime.now();
-    }
+        public EntityInfo(String value, Boolean confirmed, Double confidence) {
+            this.value = value;
+            this.confirmed = confirmed;
+            this.confidence = confidence;
+        }
 
-    @PreUpdate
-    protected void onUpdate() {
-        updatedAt = LocalDateTime.now();
+        public String getValue() {
+            return value;
+        }
+
+        public void setValue(String value) {
+            this.value = value;
+        }
+
+        public Boolean getConfirmed() {
+            return confirmed;
+        }
+
+        public void setConfirmed(Boolean confirmed) {
+            this.confirmed = confirmed;
+        }
+
+        public Double getConfidence() {
+            return confidence;
+        }
+
+        public void setConfidence(Double confidence) {
+            this.confidence = confidence;
+        }
     }
 }
