@@ -5,7 +5,7 @@ import Home from './components/Home/Home';
 import Login from './components/Auth/Login';
 import Register from './components/Auth/Register';
 import Dashboard from './components/Dashboard/Dashboard';
-import NewCase from './components/NewCase/NewCase';
+import CaseWizard from './components/NewCase/CaseWizard';
 import ProtectedRoute from './components/ProtectedRoute';
 import './App.css';
 
@@ -32,7 +32,7 @@ function App() {
               path="/new-case"
               element={
                 <ProtectedRoute>
-                  <NewCase />
+                  <CaseWizard />
                 </ProtectedRoute>
               }
             />

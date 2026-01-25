@@ -62,6 +62,16 @@ export const caseAPI = {
     api.post(`/cases/${caseId}/confirm-entity`, { fieldName }),
 };
 
+// Session API (New)
+export const sessionAPI = {
+  start: (initialText, language = 'en') => api.post('/session/start', { initialText, language }),
+  answer: (sessionId, answerText) => api.post(`/session/${sessionId}/answer`, { answerText }),
+  answerVoice: (sessionId, formData) => api.post(`/session/${sessionId}/answer-voice`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  getStatus: (sessionId) => api.get(`/session/${sessionId}/status`),
+};
+
 // Document API
 export const documentAPI = {
   verify: (data) => api.post('/documents/verify', data),
