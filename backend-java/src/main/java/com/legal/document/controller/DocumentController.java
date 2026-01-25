@@ -1,7 +1,9 @@
-package com.legal.document;
+package com.legal.document.controller;
 
-import org.springframework.web.bind.annotation.*;
+import com.legal.document.service.PdfGeneratorService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.HashMap;
 
@@ -9,6 +11,9 @@ import java.util.HashMap;
 @RequestMapping("/api/documents")
 @CrossOrigin(origins = "*")
 public class DocumentController {
+
+    @Autowired
+    private PdfGeneratorService pdfGeneratorService;
 
     @PostMapping("/verify")
     public ResponseEntity<Map<String, Object>> verifyDocument(@RequestBody Map<String, Object> payload) {
@@ -18,7 +23,6 @@ public class DocumentController {
         Map<String, Object> response = new HashMap<>();
         response.put("originalText", text);
 
-        // Strict Verification Logic
         Map<String, String> missingFields = new HashMap<>();
         if (entities == null) {
             response.put("status", "FAILED");
@@ -32,10 +36,6 @@ public class DocumentController {
             missingFields.put("date", "Incident Date is required");
         if (entities.get("location") == null || entities.get("location").toString().isEmpty())
             missingFields.put("location", "Location is required");
-        // Accused might be optional in some complaints (e.g. unknown suspect), but
-        // let's warn
-        if (entities.get("accused") == null || entities.get("accused").toString().isEmpty())
-            missingFields.put("accused", "Accused details missing (optional)");
 
         if (!missingFields.isEmpty()) {
             response.put("status", "INCOMPLETE");
@@ -44,7 +44,6 @@ public class DocumentController {
             response.put("status", "READY");
         }
 
-        // High Risk Check
         if (text != null && (text.toLowerCase().contains("kill") || text.toLowerCase().contains("suicide"))) {
             response.put("alert", "HIGH_RISK_DETECTED");
             response.put("status", "BLOCKED");
@@ -53,22 +52,21 @@ public class DocumentController {
         return ResponseEntity.ok(response);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
-    private PdfGeneratorService pdfGeneratorService;
-
     @PostMapping("/generate")
     public ResponseEntity<byte[]> generatePdf(@RequestBody Map<String, String> data) {
-        String englishText = data.getOrDefault("englishText", "");
-        String localText = data.getOrDefault("localText", "");
+        // "issue_type" or "documentType" key from frontend determines the template
+        String documentType = data.getOrDefault("issue_type", "General Consultation");
 
-        byte[] pdf = pdfGeneratorService.generateBilingualPdf(englishText, localText);
+        // Pass the entire data map to the service (contains entities like name, date,
+        // location)
+        byte[] pdf = pdfGeneratorService.generatePdf(documentType, data);
 
         if (pdf == null) {
             return ResponseEntity.internalServerError().build();
         }
 
         return ResponseEntity.ok()
-                .header("Content-Disposition", "attachment; filename=document.pdf")
+                .header("Content-Disposition", "attachment; filename=legal_document.pdf")
                 .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
                 .body(pdf);
     }
