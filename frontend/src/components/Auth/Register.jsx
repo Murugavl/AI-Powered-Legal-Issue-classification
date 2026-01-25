@@ -54,9 +54,12 @@ function Register() {
 
   return (
     <div className="auth-container">
-      <div className="auth-card">
+      <div className="auth-card glass-card">
+        <div className="auth-header-logo">
+          <img src="/satta_vizhi_logo.png" alt="Logo" className="auth-logo-img" />
+        </div>
         <h1>Register</h1>
-        <p className="auth-subtitle">Create your account to access legal document assistance</p>
+        <p className="auth-subtitle">Create your account to access Satta Vizhi</p>
 
         {error && <div className="error-message">{error}</div>}
 

@@ -42,9 +42,12 @@ function Login() {
 
   return (
     <div className="auth-container">
-      <div className="auth-card">
+      <div className="auth-card glass-card">
+        <div className="auth-header-logo">
+          <img src="/satta_vizhi_logo.png" alt="Logo" className="auth-logo-img" />
+        </div>
         <h1>Login</h1>
-        <p className="auth-subtitle">Welcome back to Legal Document Assistant</p>
+        <p className="auth-subtitle">Welcome back to Satta Vizhi</p>
 
         {error && <div className="error-message">{error}</div>}
 

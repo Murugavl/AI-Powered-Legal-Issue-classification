@@ -1,24 +1,31 @@
+/* NewCase.css */
 .new-case {
   min-height: 100vh;
-  background: #f5f7fa;
-  padding: 2rem;
+  padding-bottom: 4rem;
 }
 
 .new-case-header {
-  max-width: 900px;
-  margin: 0 auto 2rem;
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+  text-align: center;
+}
+
+.new-case-header h1 {
+  font-size: 2.2rem;
+  margin-top: 1rem;
 }
 
 .btn-back {
-  background: transparent;
+  background: none;
   border: none;
-  color: #667eea;
+  color: var(--text-muted);
   font-size: 1rem;
-  font-weight: 600;
   cursor: pointer;
-  padding: 0.5rem 0;
-  margin-bottom: 1rem;
-  transition: all 0.3s ease;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  transition: color 0.2s;
 }
 
 .btn-back:hover {
@@ -144,6 +151,7 @@
   from {
     transform: scale(0);
   }
+
   to {
     transform: scale(1);
   }
