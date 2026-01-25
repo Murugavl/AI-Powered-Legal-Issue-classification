@@ -1,7 +1,32 @@
 /* Dashboard.css */
-.dashboard {
-  min-height: 100vh;
+/* ... (Header styles handled via variables) ... */
+
+.dashboard-header h1 {
+  color: var(--text-main);
+  /* Header stays dark/colored so white text is reliable here */
 }
+
+/* Case Card - Theme Aware */
+.case-card {
+  background: var(--bg-card);
+  border: 1px solid var(--glass-border);
+  /* ... transition ... */
+}
+
+.case-body h3 {
+  color: var(--text-main);
+  /* ... */
+}
+
+.case-body {
+  color: var(--text-main);
+}
+
+.meta-item .value {
+  color: var(--text-main);
+}
+
+/* Ensure other texts use variables implicitly via inheritance or specific overrides */
 
 .dashboard-header {
   margin: 1rem 2rem 2rem;

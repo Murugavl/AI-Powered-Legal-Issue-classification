@@ -1,3 +1,4 @@
+/* QuestionFlow.css */
 .question-flow {
   max-width: 900px;
   margin: 2rem auto;
@@ -5,16 +6,17 @@
 }
 
 .progress-bar {
-  background: #e0e0e0;
+  background: rgba(125, 125, 125, 0.1);
   border-radius: 20px;
   height: 40px;
   position: relative;
   margin-bottom: 2rem;
   overflow: hidden;
+  border: 1px solid var(--glass-border);
 }
 
 .progress-fill {
-  background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(90deg, var(--primary) 0%, #764ba2 100%);
   height: 100%;
   transition: width 0.5s ease;
   display: flex;
@@ -28,12 +30,16 @@
   left: 50%;
   transform: translate(-50%, -50%);
   font-weight: 600;
-  color: #333;
+  color: var(--text-main);
   font-size: 0.9rem;
+  mix-blend-mode: difference;
 }
 
 .question-card {
-  background: white;
+  background: var(--bg-card);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--glass-border);
   border-radius: 20px;
   padding: 2.5rem;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
@@ -41,21 +47,22 @@
 }
 
 .question-title {
-  color: #333;
+  color: var(--text-main);
   font-size: 1.5rem;
   margin-bottom: 2rem;
   line-height: 1.4;
 }
 
 .collected-info {
-  background: #f8f9fa;
+  background: rgba(125, 125, 125, 0.05);
   border-radius: 12px;
   padding: 1.5rem;
   margin-bottom: 2rem;
+  border: 1px solid var(--glass-border);
 }
 
 .collected-info h3 {
-  color: #333;
+  color: var(--text-main);
   font-size: 1.1rem;
   margin-bottom: 1rem;
 }
@@ -67,37 +74,39 @@
 }
 
 .info-item {
-  background: white;
+  background: var(--bg-card);
   padding: 0.75rem 1rem;
   border-radius: 8px;
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  border-left: 4px solid #e0e0e0;
+  border-left: 4px solid var(--text-muted);
+  border: 1px solid var(--glass-border);
+  border-left-width: 4px;
 }
 
 .info-item.complete {
-  border-left-color: #4caf50;
+  border-left-color: var(--success);
 }
 
 .info-item.incomplete {
-  border-left-color: #ff9800;
+  border-left-color: var(--warning);
 }
 
 .info-label {
   font-weight: 600;
-  color: #666;
+  color: var(--text-muted);
   text-transform: capitalize;
   min-width: 100px;
 }
 
 .info-value {
-  color: #333;
+  color: var(--text-main);
   flex: 1;
 }
 
 .check-mark {
-  color: #4caf50;
+  color: var(--success);
   font-weight: bold;
   font-size: 1.2rem;
 }
@@ -109,7 +118,9 @@
 .input-section textarea {
   width: 100%;
   padding: 1rem;
-  border: 2px solid #e0e0e0;
+  background: var(--input-bg);
+  border: 2px solid var(--glass-border);
+  color: var(--input-text);
   border-radius: 12px;
   font-size: 1rem;
   font-family: inherit;
@@ -120,12 +131,12 @@
 
 .input-section textarea:focus {
   outline: none;
-  border-color: #667eea;
+  border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
 }
 
 .input-section textarea:disabled {
-  background: #f5f5f5;
+  background: rgba(125, 125, 125, 0.1);
   cursor: not-allowed;
 }
 
@@ -148,7 +159,7 @@
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, var(--primary) 0%, #764ba2 100%);
   color: white;
 }
 
@@ -158,12 +169,13 @@
 }
 
 .btn-secondary {
-  background: #6c757d;
-  color: white;
+  background: rgba(108, 117, 125, 0.2);
+  color: var(--text-main);
+  border: 1px solid var(--glass-border);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #5a6268;
+  background: rgba(108, 117, 125, 0.4);
   transform: translateY(-2px);
 }
 
@@ -183,8 +195,8 @@
 }
 
 .transcript-box {
-  background: #fff3cd;
-  border: 1px solid #ffc107;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid var(--warning);
   border-radius: 8px;
   padding: 1rem;
   margin-top: 1rem;
@@ -192,24 +204,25 @@
 
 .transcript-box p {
   margin: 0.5rem 0;
-  color: #856404;
+  color: var(--text-main);
 }
 
 .transcript-hint {
   font-size: 0.9rem;
   font-style: italic;
+  color: var(--text-muted);
 }
 
 .analysis-info {
-  background: #e3f2fd;
+  background: rgba(33, 150, 243, 0.1);
   border-radius: 12px;
   padding: 1.5rem;
-  border-left: 4px solid #2196f3;
+  border-left: 4px solid var(--primary);
 }
 
 .analysis-info p {
   margin: 0.5rem 0;
-  color: #333;
+  color: var(--text-main);
 }
 
 .alert {
@@ -220,9 +233,9 @@
 }
 
 .alert-error {
-  background: #fee;
-  color: #c33;
-  border-left-color: #c33;
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-left-color: #ef4444;
 }
 
 @media (max-width: 768px) {

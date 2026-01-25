@@ -88,7 +88,7 @@ h5,
 h6 {
   font-family: var(--font-heading);
   font-weight: 700;
-  color: white;
+  color: var(--text-main);
   margin-bottom: 0.5em;
   letter-spacing: -0.02em;
 }

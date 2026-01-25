@@ -58,7 +58,7 @@ function Register() {
       <div className="theme-toggle-absolute">
         <ThemeToggle />
       </div>
-      <div className="auth-card glass-card">
+      <div className="auth-card glass-card auth-card-wide">
         <div className="auth-header-logo">
           <img src="/satta_vizhi_logo.png" alt="Logo" className="auth-logo-img" />
         </div>
@@ -67,7 +67,7 @@ function Register() {
 
         {error && <div className="error-message">{error}</div>}
 
-        <form onSubmit={handleSubmit} className="auth-form">
+        <form onSubmit={handleSubmit} className="auth-form auth-form-grid">
           <div className="form-group">
             <label htmlFor="fullName">Full Name *</label>
             <input

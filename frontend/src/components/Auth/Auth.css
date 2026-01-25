@@ -21,7 +21,7 @@
   border: 1px solid var(--glass-border);
   border-radius: 20px;
   padding: 3rem;
-  max-width: 450px;
+  max-width: 550px;
   width: 100%;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
   position: relative;
@@ -41,35 +41,16 @@
 }
 
 .auth-card h1 {
-  color: white;
+  color: var(--text-main);
   margin-bottom: 0.5rem;
   font-size: 2.2rem;
   text-align: center;
 }
 
-.auth-subtitle {
-  color: var(--text-muted);
-  text-align: center;
-  margin-bottom: 2.5rem;
-  font-size: 1rem;
-}
-
-.auth-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5rem;
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
 .form-group label {
   font-weight: 500;
-  color: #EAEAEA;
-  /* Improved visibility as requested */
+  color: var(--text-main);
+  /* Adaptive text color */
   font-size: 0.9rem;
   margin-left: 0.25rem;
 }
@@ -77,23 +58,22 @@
 /* Inputs are globally styled in index.css, ensuring specific overrides here if needed */
 .form-group input,
 .form-group select {
-  background: rgba(15, 23, 42, 0.6);
+  background: var(--input-bg);
   border: 1px solid var(--glass-border);
-  color: white;
+  color: var(--input-text);
   padding: 0.875rem 1rem;
   border-radius: 10px;
 }
 
 .form-group input::placeholder {
-  color: #B0B0B0;
-  /* Muted visible placeholder */
+  color: var(--input-placeholder);
   opacity: 1;
 }
 
 .form-group input:focus,
 .form-group select:focus {
   border-color: var(--primary);
-  background: rgba(15, 23, 42, 0.8);
+  background: var(--input-bg);
   outline: none;
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
 }
@@ -131,4 +111,30 @@
   .auth-card {
     padding: 2rem 1.5rem;
   }
+
+  .auth-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.auth-card-wide {
+  max-width: 850px;
+}
+
+.auth-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  /* Two equal columns */
+  column-gap: 2rem;
+  row-gap: 1.5rem;
+}
+
+/* Make button span full width in grid */
+.auth-form-grid .btn-primary {
+  grid-column: 1 / -1;
+  margin-top: 1rem;
+}
+
+.auth-form-grid .form-group {
+  gap: 0.5rem;
 }
