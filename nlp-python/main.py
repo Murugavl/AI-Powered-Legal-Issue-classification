@@ -18,8 +18,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Placeholder for spaCy model, will load in a real scenario
-# nlp = spacy.load("en_core_web_sm") 
+# Load spaCy model
+try:
+    nlp = spacy.load("en_core_web_sm")
+except:
+    print("Warning: SpaCy model not found. Run 'python -m spacy download en_core_web_sm'")
+    nlp = None 
 
 # ==================== Request/Response Models ====================
 
@@ -76,46 +80,87 @@ def analyze_text(request: DocumentRequest):
     accused = None
     description = text  # Store full text as description
 
-    # Regex-based extraction
-    # Name: looks for "Name: X" or "I am X" or "My name is X"
-    name_match = re.search(
-        r"(?:Name|I am|My name is|This is)\s*[:\-]?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
-        text,
-        re.IGNORECASE
-    )
-    if name_match:
-        name = name_match.group(1)
+    # Load SpaCy model
+    # Note: Global variable 'nlp' should ideally be loaded at startup
+    global nlp
+    if 'nlp' not in globals():
+        try:
+           nlp = spacy.load("en_core_web_sm")
+        except:
+           # Fallback if not loaded
+           nlp = None
 
-    # Date: dd/mm/yyyy, dd-mm-yyyy, or natural language dates
-    date_match = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", text)
-    if date_match:
-        date = date_match.group(1)
-    else:
-        # Try natural language: "yesterday", "today", "last week"
-        if re.search(r"\byesterday\b", text, re.IGNORECASE):
-            from datetime import datetime, timedelta
-            yesterday = datetime.now() - timedelta(days=1)
-            date = yesterday.strftime("%d/%m/%Y")
-        elif re.search(r"\btoday\b", text, re.IGNORECASE):
-            date = datetime.now().strftime("%d/%m/%Y")
+    # Process text with SpaCy
+    doc = nlp(text) if nlp else None
 
-    # Location: "at X", "in X", "Location: X"
-    location_match = re.search(
-        r"(?:at|in|Location|place|near)\s*[:\-]?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
-        text,
-        re.IGNORECASE
-    )
-    if location_match:
-        location = location_match.group(1)
+    # Extract Entities using SpaCy
+    if doc:
+        # PERSON
+        if not name:
+            for ent in doc.ents:
+                if ent.label_ == "PERSON":
+                    name = ent.text
+                    break
+        
+        # DATE
+        if not date:
+            for ent in doc.ents:
+                if ent.label_ == "DATE":
+                    date = ent.text
+                    break
+        
+        # GPE (Geopolitical Entity) or LOC for Location
+        if not location:
+             for ent in doc.ents:
+                if ent.label_ in ["GPE", "LOC"]:
+                    location = ent.text
+                    break
+                    
+    # Regex Fallback (existing logic)
+    
+    # Name Fallback
+    if not name:
+        name_match = re.search(
+            r"(?:Name|I am|My name is|This is)\s*[:\-]?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
+            text,
+            re.IGNORECASE
+        )
+        if name_match:
+            name = name_match.group(1)
+
+    # Date Fallback
+    if not date:
+        date_match = re.search(r"\b(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b", text)
+        if date_match:
+            date = date_match.group(1)
+        else:
+            # Try natural language: "yesterday", "today", "last week"
+            if re.search(r"\byesterday\b", text, re.IGNORECASE):
+                from datetime import datetime, timedelta
+                yesterday = datetime.now() - timedelta(days=1)
+                date = yesterday.strftime("%d/%m/%Y")
+            elif re.search(r"\btoday\b", text, re.IGNORECASE):
+                date = datetime.now().strftime("%d/%m/%Y")
+
+    # Location Fallback
+    if not location:
+        location_match = re.search(
+            r"(?:at|in|Location|place|near)\s*[:\-]?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
+            text,
+            re.IGNORECASE
+        )
+        if location_match:
+            location = location_match.group(1)
 
     # Accused: "against X", "accused X", "by X"
-    accused_match = re.search(
-        r"(?:against|accused|suspect|by|person named)\s*[:\-]?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
-        text,
-        re.IGNORECASE
-    )
-    if accused_match:
-        accused = accused_match.group(1)
+    if not accused:
+        accused_match = re.search(
+            r"(?:against|accused|suspect|by|person named)\s*[:\-]?\s*([A-Z][a-z]+(?:\s[A-Z][a-z]+)*)",
+            text,
+            re.IGNORECASE
+        )
+        if accused_match:
+            accused = accused_match.group(1)
     
     # Classify the issue
     classification = classify_issue(text)
