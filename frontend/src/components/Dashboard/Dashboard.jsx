@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { caseAPI } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import './Dashboard.css';
 
 function Dashboard() {
@@ -49,6 +50,7 @@ function Dashboard() {
             <p className="header-subtitle">Your Case Management Console</p>
           </div>
           <div className="header-actions">
+            <ThemeToggle />
             <button onClick={handleNewCase} className="btn btn-primary">
               <span className="icon-plus">+</span> New Case
             </button>

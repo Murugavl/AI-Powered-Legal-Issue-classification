@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { caseAPI, documentAPI } from '../../utils/api';
 import QuestionFlow from '../QuestionFlow/QuestionFlow';
+import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import './NewCase.css';
 
 function NewCase() {
@@ -88,9 +89,12 @@ function NewCase() {
   return (
     <div className="new-case">
       <div className="new-case-header">
-        <button onClick={() => navigate('/dashboard')} className="btn-back">
-          ← Back to Dashboard
-        </button>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button onClick={() => navigate('/dashboard')} className="btn-back">
+            ← Back to Dashboard
+          </button>
+          <ThemeToggle />
+        </div>
         <h1>Create New Legal Document Case</h1>
       </div>
 

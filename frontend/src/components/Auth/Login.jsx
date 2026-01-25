@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authAPI } from '../../utils/api';
 import { useAuth } from '../../context/AuthContext';
+import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import './Auth.css';
 
 function Login() {
@@ -42,6 +43,9 @@ function Login() {
 
   return (
     <div className="auth-container">
+      <div className="theme-toggle-absolute">
+        <ThemeToggle />
+      </div>
       <div className="auth-card glass-card">
         <div className="auth-header-logo">
           <img src="/satta_vizhi_logo.png" alt="Logo" className="auth-logo-img" />

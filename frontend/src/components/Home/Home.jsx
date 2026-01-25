@@ -2,6 +2,8 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { useEffect } from 'react';
 import './Home.css';
+import ThemeToggle from '../ThemeToggle/ThemeToggle';
+import '../ThemeToggle/ThemeToggle.css';
 
 function Home() {
   const navigate = useNavigate();
@@ -22,6 +24,7 @@ function Home() {
           <span className="logo-text text-gradient">Satta Vizhi</span>
         </div>
         <div className="nav-links">
+          <ThemeToggle />
           <button onClick={() => navigate('/login')} className="btn btn-secondary">Login</button>
           <button onClick={() => navigate('/register')} className="btn btn-primary">Get Started</button>
         </div>
