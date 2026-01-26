@@ -3,6 +3,9 @@
 .vscode/
 .idea/
 *.log
+.env
+.env.local
+.env.*.local
 
 # Frontend (Node/React)
 frontend/node_modules/
@@ -25,6 +28,7 @@ backend-java/*.war
 backend-java/.classpath
 backend-java/.project
 backend-java/.settings/
+backend-java/.env
 
 # NLP Service (Python)
 nlp-python/__pycache__/

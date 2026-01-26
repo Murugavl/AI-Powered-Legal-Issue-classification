@@ -4,8 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict
 from langdetect import detect
 import spacy
-import re
-from datetime import datetime
+# re and datetime removed as they were unused
 
 app = FastAPI(title="Legal Document NLP Service", version="2.0")
 
