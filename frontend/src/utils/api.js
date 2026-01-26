@@ -66,9 +66,7 @@ export const caseAPI = {
 export const sessionAPI = {
   start: (initialText, language = 'en') => api.post('/session/start', { initialText, language }),
   answer: (sessionId, answerText) => api.post(`/session/${sessionId}/answer`, { answerText }),
-  answerVoice: (sessionId, formData) => api.post(`/session/${sessionId}/answer-voice`, formData, {
-    headers: { 'Content-Type': 'multipart/form-data' }
-  }),
+  answerVoice: (sessionId, formData) => api.post(`/session/${sessionId}/answer-voice`, formData),
   getStatus: (sessionId) => api.get(`/session/${sessionId}/status`),
 };
 

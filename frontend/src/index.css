@@ -29,27 +29,42 @@
   --input-bg: rgba(15, 23, 42, 0.6);
   --input-text: white;
   --input-placeholder: #94a3b8;
+  --msg-sys-bg: rgba(255, 255, 255, 0.05);
+  --msg-user-text: white;
 }
 
 [data-theme='light'] {
-  --bg-dark: #f0f4f8;
-  /* Light Grayish Blue Background */
-  --bg-card: rgba(255, 255, 255, 0.85);
-  /* White Card */
+  /* solid backgrounds for better readability */
+  --bg-dark: #f8fafc;
+  /* Very light slate */
+  --bg-card: #ffffff;
+  /* Pure white */
+
+  /* darker primary for text contrast */
   --primary: #2563eb;
-  /* Solid Blue */
-  --primary-glow: rgba(37, 99, 235, 0.2);
+  --primary-glow: rgba(37, 99, 235, 0.15);
   --accent: #d97706;
-  /* Darker Gold for visibility */
-  --text-main: #0f172a;
-  /* Dark Navy Text */
-  --text-muted: #64748b;
-  /* Slate Gray */
-  --glass-border: rgba(0, 0, 0, 0.1);
-  --glass-highlight: rgba(255, 255, 255, 0.5);
-  --input-bg: rgba(255, 255, 255, 1);
-  --input-text: #0f172a;
+
+  /* High contrast text */
+  --text-main: #020617;
+  /* Almost black */
+  --text-muted: #475569;
+  /* Dark slate */
+
+  /* Borders */
+  --glass-border: #cbd5e1;
+  /* visible light grey border */
+  --glass-highlight: transparent;
+
+  /* Inputs */
+  --input-bg: #ffffff;
+  --input-text: #020617;
   --input-placeholder: #64748b;
+
+  /* Messages */
+  --msg-sys-bg: #e2e8f0;
+  /* Distinct grey for system ops */
+  --msg-user-text: #ffffff;
 }
 
 * {

@@ -17,22 +17,24 @@ public class AuthController {
     private AuthService authService;
 
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request) {
-        try {
-            AuthResponse response = authService.register(request);
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            return ResponseEntity.badRequest().build();
-        }
+    public ResponseEntity<java.util.Map<String, String>> register(@RequestBody RegisterRequest request) {
+        AuthResponse response = authService.register(request);
+        java.util.Map<String, String> map = new java.util.HashMap<>();
+        map.put("token", response.getToken());
+        map.put("phoneNumber", response.getPhoneNumber());
+        map.put("fullName", response.getFullName());
+        map.put("preferredLanguage", response.getPreferredLanguage());
+        return ResponseEntity.ok(map);
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
-        try {
-            AuthResponse response = authService.login(request);
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(401).build();
-        }
+    public ResponseEntity<java.util.Map<String, String>> login(@RequestBody LoginRequest request) {
+        AuthResponse response = authService.login(request);
+        java.util.Map<String, String> map = new java.util.HashMap<>();
+        map.put("token", response.getToken());
+        map.put("phoneNumber", response.getPhoneNumber());
+        map.put("fullName", response.getFullName());
+        map.put("preferredLanguage", response.getPreferredLanguage());
+        return ResponseEntity.ok(map);
     }
 }

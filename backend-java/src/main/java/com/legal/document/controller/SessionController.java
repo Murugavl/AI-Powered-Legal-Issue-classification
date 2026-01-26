@@ -37,7 +37,7 @@ public class SessionController {
         return ResponseEntity.ok(sessionService.submitAnswer(sessionId, request, phoneNumber));
     }
 
-    @PostMapping("/{sessionId}/voice")
+    @PostMapping("/{sessionId}/answer-voice")
     public ResponseEntity<SessionResponse> submitVoiceAnswer(
             @PathVariable String sessionId,
             @RequestParam("audio") MultipartFile audioFile,

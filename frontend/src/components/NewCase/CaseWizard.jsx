@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { sessionAPI, documentAPI, caseAPI } from '../../utils/api';
 import ThemeToggle from '../ThemeToggle/ThemeToggle';
+import VoiceRecorder from './VoiceRecorder';
 import './CaseWizard.css';
 
 function CaseWizard() {
@@ -74,6 +75,14 @@ function CaseWizard() {
         scrollToBottom();
     }, [messages]);
 
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) {
+            alert("Please log in to use the Legal Assistant.");
+            navigate('/login');
+        }
+    }, [navigate]);
+
     const handleSend = async () => {
         if (!inputText.trim()) return;
 
@@ -86,11 +95,11 @@ function CaseWizard() {
             let response;
             if (!sessionId) {
                 // First message starts the session
-                response = await sessionAPI.start(userMsg.text);
+                response = await sessionAPI.start(userMsg.text); // backend uses token for phone number
                 setSessionId(response.data.sessionId);
             } else {
                 // Subsequent messages are answers
-                response = await sessionAPI.answer(sessionId, userMsg.text);
+                response = await sessionAPI.answer(sessionId, userMsg.text); // backend uses token
             }
 
             const data = response.data;
@@ -132,13 +141,10 @@ function CaseWizard() {
     };
 
     const generateDocument = async () => {
-        // Logic to call document generation (reusing NewCase logic logic)
-        // For now, we assume we create the case physically then download
         try {
-            // 1. Create the persistent Case Record
             const createResponse = await caseAPI.create({
-                initialText: messages[1]?.text || "Chat Session", // The user's first input
-                language: 'en', // TODO: Get from NLP
+                initialText: messages[1]?.text || "Chat Session",
+                language: 'en',
                 entities: extractedData.extractedEntities,
                 issueType: extractedData.detectedIntent || 'general_complaint',
                 subCategory: extractedData.detectedDomain || 'general'
@@ -146,18 +152,15 @@ function CaseWizard() {
 
             const caseRef = createResponse.data;
 
-            // 2. Generate PDF using the new Template Engine
-            // We merge the extracted entities with metadata
             const pdfData = {
                 ...extractedData.extractedEntities,
                 issue_type: extractedData.detectedIntent || 'General Consultation',
                 domain: extractedData.detectedDomain,
-                description: messages[1]?.text || "" // Include original story
+                description: messages[1]?.text || ""
             };
 
             const pdfResponse = await documentAPI.generate(pdfData);
 
-            // Download
             const blob = new Blob([pdfResponse.data], { type: 'application/pdf' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -169,6 +172,74 @@ function CaseWizard() {
 
         } catch (err) {
             alert("Error generating document: " + err.message);
+        }
+    };
+
+    // Voice Input Handler
+    const handleVoiceInput = async (audioFile) => {
+        setLoading(true);
+        const processingMsg = { id: Date.now(), sender: 'user', text: '🎤 Voice Input Processing...' };
+        setMessages(prev => [...prev, processingMsg]);
+
+        try {
+            // Get user details
+            const userStr = localStorage.getItem('user');
+            const user = userStr ? JSON.parse(userStr) : null;
+            const phoneNumber = user?.phoneNumber || '9999999999'; // Fallback only for dev, but really should be logged in
+
+            const formData = new FormData();
+            formData.append('audio', audioFile);
+            formData.append('transcript', '');
+            formData.append('language', 'en-IN');
+            formData.append('phoneNumber', phoneNumber);
+
+            let response;
+            if (!sessionId) {
+                const startRes = await sessionAPI.start("Voice Start");
+                const newSessionId = startRes.data.sessionId;
+                setSessionId(newSessionId);
+                response = await sessionAPI.answerVoice(newSessionId, formData);
+            } else {
+                response = await sessionAPI.answerVoice(sessionId, formData);
+            }
+
+            const data = response.data;
+            setMessages(prev => prev.filter(m => m.id !== processingMsg.id));
+            setMessages(prev => [...prev, {
+                id: Date.now(),
+                sender: 'user',
+                text: "🎤 [Audio Sent] " + (data.transcript || "")
+            }]);
+
+            setEntities(data.extractedEntities || {});
+            setExtractedData(data);
+
+            if (data.nextQuestion) {
+                setTimeout(() => {
+                    setMessages(prev => [...prev, {
+                        id: Date.now() + 1,
+                        sender: 'system',
+                        text: data.nextQuestion
+                    }]);
+                }, 500);
+            } else if (data.complete) {
+                setIsComplete(true);
+                setMessages(prev => [...prev, {
+                    id: Date.now() + 1,
+                    sender: 'system',
+                    text: "I have gathered all the necessary information. Your document is ready to be generated."
+                }]);
+            }
+
+        } catch (err) {
+            console.error(err);
+            setMessages(prev => [...prev, {
+                id: Date.now() + 1,
+                sender: 'system',
+                text: "Error processing voice input. Please try again."
+            }]);
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -204,6 +275,7 @@ function CaseWizard() {
                     </div>
                 ) : (
                     <div className="input-area">
+                        <VoiceRecorder onRecordingComplete={handleVoiceInput} isProcessing={loading} />
                         <input
                             type="text"
                             className="chat-input"
@@ -212,7 +284,6 @@ function CaseWizard() {
                             onChange={(e) => setInputText(e.target.value)}
                             onKeyPress={handleKeyPress}
                             disabled={loading}
-                            autoFocus
                         />
                         <button className="btn-send" onClick={handleSend} disabled={loading || !inputText.trim()}>
                             ➜
@@ -234,7 +305,6 @@ function CaseWizard() {
                             ))}
                         </div>
 
-                        {/* Legal Mapping Section */}
                         {extractedData && extractedData.suggestedSections && (
                             <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--glass-border)', paddingTop: '1rem' }}>
                                 <div className="entities-title" style={{ color: '#ef4444' }}>⚖️ Potential Legal Sections</div>
@@ -255,8 +325,7 @@ function CaseWizard() {
                             </div>
                         )}
 
-                        {/* Readiness Score Section */}
-                        {extractedData.readinessScore !== undefined && (
+                        {extractedData && extractedData.readinessScore !== undefined && (
                             <div style={{ marginTop: '1.5rem' }}>
                                 <div className="entities-title">Legal Readiness Score</div>
                                 <div className="progress-container" style={{ background: '#334155', borderRadius: '10px', height: '20px', width: '100%', overflow: 'hidden', position: 'relative' }}>
@@ -276,7 +345,6 @@ function CaseWizard() {
                                         {extractedData.readinessStatus?.replace('_', ' ')}
                                     </span>
                                 </div>
-                                {/* Generate Button Contextual */}
                                 {extractedData.readinessScore < 50 && (
                                     <div style={{ fontSize: '0.8rem', color: '#ef4444', marginTop: '5px' }}>
                                         ❌ Case is not legally actionable yet. Please provide more details.
@@ -285,8 +353,7 @@ function CaseWizard() {
                             </div>
                         )}
 
-                        {/* Filing Guidance Section */}
-                        {extractedData.filingGuidance && (
+                        {extractedData && extractedData.filingGuidance && (
                             <div style={{ marginTop: '1.5rem', borderTop: '1px solid var(--glass-border)', paddingTop: '1rem' }}>
                                 <div className="entities-title" style={{ color: '#0ea5e9' }}>📋 Filing Guidance</div>
                                 <div style={{ fontSize: '0.9rem', color: '#e2e8f0', background: 'rgba(14, 165, 233, 0.1)', padding: '1rem', borderRadius: '8px', border: '1px solid rgba(14, 165, 233, 0.2)' }}>
