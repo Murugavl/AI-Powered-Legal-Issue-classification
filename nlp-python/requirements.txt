@@ -5,3 +5,5 @@ spacy
 pydantic
 python-multipart
 httpx
+google-generativeai
+python-dotenv

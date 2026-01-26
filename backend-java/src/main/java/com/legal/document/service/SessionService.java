@@ -49,7 +49,12 @@ public class SessionService {
     private UserRepository userRepository;
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private final String NLP_SERVICE_URL = "http://localhost:8000/analyze";
+    @org.springframework.beans.factory.annotation.Value("${VITE_NLP_BASE_URL:http://localhost:8000}")
+    private String nlpBaseUrl;
+
+    private String getNlpServiceUrl() {
+        return nlpBaseUrl + "/analyze";
+    }
 
     @Transactional
     public SessionResponse startSession(StartSessionRequest request, String phoneNumber) {
@@ -221,7 +226,7 @@ public class SessionService {
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
 
             // This expects the exact JSON structure from main.py's AnalysisResponse
-            return restTemplate.postForObject(NLP_SERVICE_URL, entity, Map.class);
+            return restTemplate.postForObject(getNlpServiceUrl(), entity, Map.class);
         } catch (Exception e) {
             e.printStackTrace();
             // Fallback

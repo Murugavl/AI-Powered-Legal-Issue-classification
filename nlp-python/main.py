@@ -92,10 +92,48 @@ def read_root():
 @app.post("/analyze", response_model=AnalysisResponse)
 def analyze_text(request: DocumentRequest):
     """
-    Analyze user input using the Integrated Architecture.
+    Analyze user input using the Integrated Architecture (LLM or Rule-based).
     """
     original_text = request.text
     
+    # Check if LLM is available
+    from modules.llm_agent import analyze_with_llm, api_key as llm_api_key
+    
+    if llm_api_key:
+        # === LLM PATH ===
+        # We treat 'original_text' as the full history for now (simplification)
+        llm_result = analyze_with_llm(original_text)
+        
+        if "error" not in llm_result:
+            entities = llm_result.get("entities", {})
+            return AnalysisResponse(
+                language="en", # Simplify for now
+                entities=EntityExtraction(
+                    name=entities.get("name"),
+                    date=entities.get("date"),
+                    location=entities.get("location"),
+                    accused=entities.get("accused"),
+                    issue_type=llm_result.get("intent"),
+                    description=entities.get("description")
+                ),
+                completeness={}, 
+                next_question=llm_result.get("next_question"),
+                confidence=llm_result.get("confidence", 0.8),
+                readiness=ReadinessAssessment(
+                    score=llm_result.get("readiness_score", 50),
+                    status="Processing",
+                    feedback=llm_result.get("legal_advice", "")
+                ),
+                filing_guidance=FilingGuidance(
+                    authority="See Legal Advice",
+                    jurisdiction_hint="Based on location",
+                    enclosures=[],
+                    next_steps=[llm_result.get("legal_advice", "")]
+                ),
+                legal_sections=""
+            )
+            
+    # === FALLBACK RULE-BASED PATH ===
     # 0. Language Detection
     lang = detect_lang(original_text)
     
