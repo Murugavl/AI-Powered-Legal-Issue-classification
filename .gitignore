@@ -3,7 +3,9 @@
 .vscode/
 .idea/
 *.log
-
+.env
+.env.local
+.env.*.local
 # Frontend (Node/React)
 frontend/node_modules/
 frontend/dist/

@@ -1,7 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8080/api';
-const NLP_BASE_URL = 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080/api';
+const NLP_BASE_URL = import.meta.env.VITE_NLP_BASE_URL || 'http://localhost:8000';
 
 // Create axios instance for backend
 const api = axios.create({
