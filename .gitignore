@@ -6,7 +6,10 @@
 .env
 .env.local
 .env.*.local
+<<<<<<< HEAD
 
+=======
+>>>>>>> cb7d3b90908a798c367d981cad58cf4be4373092
 # Frontend (Node/React)
 frontend/node_modules/
 frontend/dist/
