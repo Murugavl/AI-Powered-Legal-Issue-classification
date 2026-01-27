@@ -31,35 +31,39 @@ public class SessionController {
 
     @PostMapping("/{sessionId}/answer")
     public ResponseEntity<SessionResponse> submitAnswer(
+            @RequestHeader("Authorization") String token,
             @PathVariable String sessionId,
-            @RequestBody SubmitAnswerRequest request,
-            @RequestParam String phoneNumber) {
+            @RequestBody SubmitAnswerRequest request) {
+        String phoneNumber = getPhoneNumberFromToken(token);
         return ResponseEntity.ok(sessionService.submitAnswer(sessionId, request, phoneNumber));
     }
 
     @PostMapping("/{sessionId}/answer-voice")
     public ResponseEntity<SessionResponse> submitVoiceAnswer(
+            @RequestHeader("Authorization") String token,
             @PathVariable String sessionId,
             @RequestParam("audio") MultipartFile audioFile,
             @RequestParam(value = "transcript", required = false) String transcript,
-            @RequestParam(value = "language", defaultValue = "en") String language,
-            @RequestParam String phoneNumber) {
+            @RequestParam(value = "language", defaultValue = "en") String language) {
+        String phoneNumber = getPhoneNumberFromToken(token);
         return ResponseEntity
                 .ok(sessionService.submitVoiceAnswer(sessionId, audioFile, transcript, language, phoneNumber));
     }
 
     @PostMapping("/{sessionId}/evidence")
     public ResponseEntity<SessionResponse> uploadEvidence(
+            @RequestHeader("Authorization") String token,
             @PathVariable String sessionId,
-            @RequestParam("file") MultipartFile file,
-            @RequestParam String phoneNumber) {
+            @RequestParam("file") MultipartFile file) {
+        String phoneNumber = getPhoneNumberFromToken(token);
         return ResponseEntity.ok(sessionService.uploadEvidence(sessionId, file, phoneNumber));
     }
 
     @DeleteMapping("/{sessionId}")
     public ResponseEntity<Void> deleteSession(
-            @PathVariable String sessionId,
-            @RequestParam String phoneNumber) {
+            @RequestHeader("Authorization") String token,
+            @PathVariable String sessionId) {
+        String phoneNumber = getPhoneNumberFromToken(token);
         sessionService.deleteSession(sessionId, phoneNumber);
         return ResponseEntity.ok().build();
     }
