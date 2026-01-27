@@ -7,3 +7,9 @@ python-multipart
 httpx
 google-generativeai
 python-dotenv
+langgraph
+langchain-groq
+langchain-community
+langgraph-checkpoint-postgres
+psycopg-binary
+psycopg-pool
