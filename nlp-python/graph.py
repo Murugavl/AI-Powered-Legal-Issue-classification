@@ -34,8 +34,9 @@ class LegalState(TypedDict):
     last_rejection_turn: int         # Turn number of last "No" to confirmation
     
     # FACT TRACKING
-    asked_facts: List[str]           # List of fact keys/categories already asked
-    answered_facts: List[str]        # List of facts explicitly answered by user
+    asked_facts: List[str]            # List of fact keys/categories already asked
+    answered_facts: Dict[str, Any]    # Dict of facts explicitly answered {key: value}
+    fact_conflicts: Dict[str, List[Any]] # Conflicting values {key: [val1, val2]}
     
     stage: str                       # "investigation", "confirmation", "completed"
     turn_count: int                  # Turn counter to force clarification loops
@@ -80,7 +81,15 @@ def analyze_legal_context_node(state: LegalState):
     
     # Track asked/answered
     asked_facts = set(state.get("asked_facts", []))
-    answered_facts = set(state.get("answered_facts", []))
+    
+    # Handle backward compatibility for answered_facts (List vs Dict)
+    raw_answered = state.get("answered_facts", {})
+    if isinstance(raw_answered, list):
+        answered_facts = {k: "unknown" for k in raw_answered}
+    else:
+        answered_facts = raw_answered
+        
+    fact_conflicts = state.get("fact_conflicts", {})
     
     # Increase turn count
     current_turn_count = state.get("turn_count", 0) + 1
@@ -127,40 +136,62 @@ def analyze_legal_context_node(state: LegalState):
         
         analysis = json.loads(content.strip())
         
-        # Merge facts
+        # New extractions
         new_critical = analysis.get("extracted_critical_facts", {})
         new_optional = analysis.get("extracted_optional_facts", {})
         required_keys = analysis.get("required_keys_schema", [])
         intent = analysis.get("intent", "Unknown")
         
-        # Merge with existing logic (prefer new values if non-null/empty)
-        # We need to be careful not to overwrite existing valid data with empty/null if LLM hallucinates
+        # Metrics for Readiness
+        newly_added_facts_count = 0
+        resolved_conflicts_count = 0
+        
+        # --- CONFLICT DETECTION & FACT LOCKING ---
+        # Helper to process updates
         updated_critical = current_critical.copy()
+        
         for k, v in new_critical.items():
-            if v and v != "unknown" and v != "null":
-                updated_critical[k] = v
+            if not v or str(v).lower() in ["unknown", "null", "none"]:
+                continue
                 
+            # Check for conflict resolution
+            if k in fact_conflicts:
+                # User provided a value for a specifically conflicted field
+                # We interpret this as the resolution
+                answered_facts[k] = v
+                updated_critical[k] = v
+                del fact_conflicts[k]
+                resolved_conflicts_count += 1
+                
+            elif k in answered_facts:
+                existing_val = answered_facts[k]
+                # If value differs significantly, flag conflict
+                # Simple string equality for now, could be fuzzier
+                if str(existing_val).strip().lower() != str(v).strip().lower():
+                    # CONFLICT DETECTED!
+                    # Do NOT overwrite. Record conflict.
+                    fact_conflicts[k] = [existing_val, v]
+                else:
+                    # Same value, re-confirmed. No op.
+                    pass
+            else:
+                # New fact found
+                answered_facts[k] = v
+                updated_critical[k] = v
+                newly_added_facts_count += 1
+                
+        # Optional facts merge (less strict, but let's lock them too for consistency)
         updated_optional = current_optional.copy()
         for k, v in new_optional.items():
-            if v:
-                updated_optional[k] = v
+            if v and str(v).lower() not in ["unknown", "null"]:
+                if k not in answered_facts: # Treat optional same as critical for locking
+                    answered_facts[k] = v
+                    updated_optional[k] = v
+                    # Optional facts don't necessarily count for "critical" readiness but good to track
 
-        # FACT-FIRST VALIDATION & TRACKING
-        # Programmatically calculate missing fields based on the LLM's defined schema and our actual data
+        # --- MISSING FIELDS CALCULATION ---
         missing_critical_fields = []
         present_critical_count = 0
-        newly_added_facts_count = 0
-        
-        # 1. Update Answered Facts based on extraction
-        for key, val in updated_critical.items():
-            if val and str(val).lower() not in ["unknown", "null"]:
-                if key not in answered_facts:
-                    answered_facts.add(key)
-                    newly_added_facts_count += 1
-        
-        # 2. Filter Missing Fields (Remove anything already answered OR asked recently without result?)
-        # Actually, if we asked and they didn't answer, we might need to re-ask differently.
-        # But we must NEVER ask what is in answered_facts.
         
         for key in required_keys:
             if key in answered_facts:
@@ -168,77 +199,59 @@ def analyze_legal_context_node(state: LegalState):
             else:
                 missing_critical_fields.append(key)
                 
-        # 3. Calculate Readiness
+        # --- READINESS CALCULATION ---
         total_required = len(required_keys)
         readiness_score = 0
         if total_required > 0:
             readiness_score = int((present_critical_count / total_required) * 100)
             
-        # Stop-gap: If we have many facts but LLM didn't return schema, boost score slightly
+        # Fallback for generic intents
         if readiness_score == 0 and len(answered_facts) > 3:
             readiness_score = 50
             
-        # 4. Anti-Inflation: If NO new facts added this turn, do not increase readiness aggressively
+        # Guard 1: Anti-Inflation
         previous_score = state.get("readiness_score", 0)
-        if newly_added_facts_count == 0:
-            # Cap readiness at previous level to prevent "chatty" inflation
-            if readiness_score > previous_score:
-                readiness_score = previous_score
+        # Only allow score increase if we have NEW info (confirmed fact or resolved conflict)
+        if newly_added_facts_count == 0 and resolved_conflicts_count == 0:
+             if readiness_score > previous_score:
+                 readiness_score = previous_score
 
-        # Stage Management & Confirmation Logic
+        # Guard 2: Unresolved Conflicts Cap
+        if len(fact_conflicts) > 0:
+            if readiness_score > 70:
+                readiness_score = 70
+
+        # Stage Management
         next_step = "ask_question"
         new_stage = current_stage
         last_rejection = state.get("last_rejection_turn", -1)
         
         # --- READINESS GATEKEEPER ---
-        # 1. Enforce minimum turns (Clarification Discipline)
         if current_turn_count <= 2:
             if readiness_score > 60: readiness_score = 60
             
-        # 2. Check for Placeholders / Ambiguity
-        has_placeholders = False
+        # Check for Placeholders
         vals = list(updated_critical.values())
-        if any(x and str(x).lower() in ["unknown", "tbd", "insert", "placeholder", "null", "none"] for x in vals):
-            has_placeholders = True
-            
-        # 3. Minimum Critical Categories (Diversity Check)
-        # We want >= 3 distinct non-placeholder facts
-        distinct_facts = [v for v in vals if v and str(v).lower() not in ["unknown", "tbd", "insert", "placeholder"]]
-        if len(distinct_facts) < 3:
-            if readiness_score > 75: readiness_score = 75
-            
-        # 4. Cap score if placeholders exist
-        if has_placeholders and readiness_score > 80:
-             readiness_score = 80
-             
-        # --- CONFIRMATION RETRY LOGIC (STRENGTHENED) ---
-        # If user previously rejected, force at least 2 turns or 2 NEW facts
-        if last_rejection > 0:
-            turns_since_reject = current_turn_count - last_rejection
-            
-            # Reset rejection if user explicity says "ready" (handled by intent logic ideally, but simplest here is time)
-            if turns_since_reject < 2:
-                 # Check if we have gathered significant new info
-                 # We track newly_added_facts_count. 
-                 # This simple logic holds off confirmation for 2 turns.
-                 if readiness_score > 79: readiness_score = 79 
+        if any(x and str(x).lower() in ["unknown", "tbd", "insert", "placeholder"] for x in vals):
+             if readiness_score > 80: readiness_score = 80
         
         # --- TRANSITION LOGIC ---
         if current_stage == "confirmation":
             last_msg = messages[-1].content.lower()
-            # aggressive check for rejection
-            if any(x in last_msg for x in ["no", "wait", "stop", "wrong", "missing", "incorrect", "not yet", "hold on"]):
+            if any(x in last_msg for x in ["no", "wait", "stop", "wrong", "missing", "incorrect"]):
                 new_stage = "investigation"
                 next_step = "ask_question"
-                last_rejection = current_turn_count # Mark rejection turn
+                last_rejection = current_turn_count
             elif any(x in last_msg for x in ["yes", "proceed", "go", "correct", "continue", "right", "agree"]):
                 next_step = "generate_document"
             else:
-                # Ambiguous? Assume proceed or re-confirm. Let's ask to confirm again to be safe.
                 next_step = "ask_confirmation" 
         else:
             # Investigation stage
-            if readiness_score >= 80:
+            # If conflicts exist, we MUST stay in investigation/questioning
+            if len(fact_conflicts) > 0:
+                next_step = "ask_question"
+            elif readiness_score >= 80:
                 next_step = "ask_confirmation"
                 new_stage = "confirmation"
             else:
@@ -258,7 +271,8 @@ def analyze_legal_context_node(state: LegalState):
             "turn_count": current_turn_count,
             "last_rejection_turn": last_rejection,
             "asked_facts": list(asked_facts),
-            "answered_facts": list(answered_facts)
+            "answered_facts": answered_facts,
+            "fact_conflicts": fact_conflicts
         }
     except Exception as e:
         print(f"Error parsing analysis: {e}")
@@ -276,6 +290,8 @@ def generate_question_node(state: LegalState):
     next_step = state.get("next_step", "ask_question")
     messages = state.get("messages", [])
     
+    fact_conflicts = state.get("fact_conflicts", {})
+    
     if next_step == "ask_confirmation":
         # Confirmation Question
         prompt = f"""
@@ -283,22 +299,43 @@ def generate_question_node(state: LegalState):
         "I have sufficient information to proceed with drafting the legal document. Shall I continue?"
         Return ONLY the translated text.
         """
+    elif len(fact_conflicts) > 0:
+        # CONFLICT RESOLUTION MODE
+        # Pick the first conflict to resolve
+        conflict_key = list(fact_conflicts.keys())[0]
+        conflict_vals = fact_conflicts[conflict_key]
+        
+        prompt = f"""
+        You are a cautious legal assistant.
+        Intent: {intent}
+        Conflict Conflict Logic: The user provided conflicting details for '{conflict_key}'.
+        Values found: {conflict_vals}
+        
+        Task:
+        1. Ask the user politely to clarify which value is correct for '{conflict_key}'.
+        2. Do NOT mention "Value 1" or "Value 2" explicitly if it sounds robotic, just contextually ask.
+        3. E.g., "You mentioned X earlier but now Y. Which account number is correct?"
+        4. Use {lang} language.
+        
+        Return ONLY the question.
+        """
+        
     else:
         # MEMORY GUARD checks
-        # Get recent AI messages to find what was just asked
         recent_ai_msgs = [m.content for m in messages if isinstance(m, AIMessage)][-2:]
         recent_context = "\n".join(recent_ai_msgs)
         
-        # Filter: Remove keys that are already answered
-        answered_facts = state.get("answered_facts", [])
+        # Handling Answered Facts
+        raw_answered = state.get("answered_facts", {})
+        if isinstance(raw_answered, dict):
+            answered_keys = list(raw_answered.keys())
+        else:
+            answered_keys = list(raw_answered) # Fallback if list
+            
         asked_facts = state.get("asked_facts", [])
         
-        # Filter missing_fields to exclude anything we already have
-        # This is a double-check on top of the Analysis node
-        filtered_missing = [f for f in missing if f not in answered_facts]
-        
-        # If filtered_missing is empty but we are still here (score < 80),
-        # we need to ask an open-ended question or find a secondary detail.
+        # STRICT FILTER: Never ask for what we have
+        filtered_missing = [f for f in missing if f not in answered_keys]
         
         prompt = f"""
         You are a compassionate legal assistant.
@@ -306,15 +343,16 @@ def generate_question_node(state: LegalState):
         Intent: {intent}
         Missing Critical Info: {filtered_missing}
         
-        [What we ALREADY KNOW (Do NOT Ask)]: {answered_facts}
+        [What we ALREADY KNOW (STRICTLY DO NOT ASK)]: {answered_keys}
         [RECENTLY ASKED QUESTIONS]: {recent_context}
         
         Task: 
         1. Generate ONE clear, polite follow-up question to collect the missing critical info.
         2. STRICT RULE: Do NOT ask about anything in [What we ALREADY KNOW].
-        3. STRICT RULE: Do NOT ask about anything mentioned in [RECENTLY ASKED QUESTIONS].
-        4. Use {lang} language.
-        5. If [Missing Critical Info] is empty, ask: "Is there any other important detail or document (like an agreement or proof) you haven't mentioned?"
+        3. STRICT RULE: If 'bank_name' or 'account' is in [What we ALREADY KNOW], do NOT mention it in the question.
+        4. STRICT RULE: Do NOT ask about anything mentioned in [RECENTLY ASKED QUESTIONS].
+        5. Use {lang} language.
+        6. If [Missing Critical Info] is empty, ask: "Is there any other important detail or document you haven't mentioned?"
         
         Return ONLY the question text in {lang}.
         """
