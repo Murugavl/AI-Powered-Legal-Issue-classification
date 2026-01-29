@@ -9,6 +9,24 @@ from langchain_core.output_parsers import JsonOutputParser
 # Import shared LLM provider
 from llm_provider import llm
 
+# Normalize user answers so "No / Unknown" are terminal
+def normalize_value(v):
+    if v is None:
+        return None
+    s = str(v).strip().lower()
+    if s in ["unknown", "null", "none", "not available", "na", "no"]:
+        return "NOT_AVAILABLE"
+    return v
+
+# 🔁 Canonical Alias Map to prevent semantic repetition
+CANONICAL_ALIASES = {
+    "witness": "witness_details",
+    "witnesses": "witness_details",
+    "witness_info": "witness_details",
+    "eyewitness": "witness_details",
+    "bystanders": "witness_details"
+}
+
 # Define State
 class LegalState(TypedDict):
     # Valid messages from the conversation history
@@ -100,12 +118,42 @@ def analyze_legal_context_node(state: LegalState):
     extraction_prompt = f"""
     You are an expert AI Legal Assistant 'Satta Vizhi'.
     
+    [GLOBAL CONSTRAINT]
+    You MUST extract only FACTUAL information. 
+    You MUST NOT extract legal conclusions, sections, acts, or court jurisdictions.
+    
+    [CANONICAL FACT DIMENSIONS - NORMALIZATION RULES]
+    To eliminate semantic repetition, you MUST map user inputs to these Abstract Canonical Dimensions:
+    
+    1. **Event Dimension**:
+       - Key: `primary_event_overview` (The main thing that happened)
+       - Key: `specific_action` (Specific acts done by parties)
+    2. **Party Dimension**:
+       - Key: `counterparty_name` (The person/entity opposing the user)
+       - Key: `counterparty_role` (Landlord, Husband, Bank, etc.)
+       - Key: `user_role` (Tenant, Wife, Customer, etc.)
+    3. **Time Dimension**:
+       - Key: `event_timestamp` (Date/Time of main event)
+       - Key: `duration_frequency` (How long/often)
+    4. **Place/Context Dimension**:
+       - Key: `incident_location` (Physical or Digital place)
+       - Key: `reference_identifier` (Account Number, ID, Reg Number)
+    5. **Impact Dimension**:
+       - Key: `financial_loss_value` (Monetary impact)
+       - Key: `harm_description` (Non-monetary harm)
+
+    [CONSISTENCY & REDUNDANCY CHECK]
+    - **Normalization**: If the user says "My husband hit me" -> extract 'primary_event_overview': "Physical assault per user". 
+    - **Deduplication**: Compare with [CURRENT FACTS]. If 'event_timestamp' is already known, DO NOT include it in 'required_keys_schema' even if the user rephrases it as 'date of calling'.
+    - **Locking**: If a user previously said "No" or "Unknown" to a dimension, it is locked. Do not put it in schema.
+
     [TASK]
     Analyze the conversation history.
     
-    1. **Identify Intent**: What is the specific legal issue? (e.g., 'Landlord Dispute', 'Divorce Petition')
-    2. **Fact Extraction**: Extract meaningful legal facts.
-    3. **Schema Definition**: For this specific intent, define the REQUIRED critical fields that MUST be collected.
+    1. **Identify Intent**: specific factual problem.
+    2. **Fact Extraction**: Extract facts using the CANONICAL KEYS above.
+       - Use "NOT_AVAILABLE" for negative answers to lock them.
+    3. **Schema Definition**: Define REQUIRED fields using ONLY the CANONICAL KEYS above.
     
     [CURRENT FACTS]
     Critical: {json.dumps(current_critical)}
@@ -118,9 +166,9 @@ def analyze_legal_context_node(state: LegalState):
     Return a VALID JSON object (no markdown):
     {{
         "intent": "string",
-        "extracted_critical_facts": {{ "key": "value" }},
-        "extracted_optional_facts": {{ "key": "value" }},
-        "required_keys_schema": ["key1", "key2", "key3"]
+        "extracted_critical_facts": {{ "CANONICAL_KEY": "value" }},
+        "extracted_optional_facts": {{ "CANONICAL_KEY": "value" }},
+        "required_keys_schema": ["CANONICAL_KEY_1", "CANONICAL_KEY_2"]
     }}
     """
     
@@ -138,8 +186,18 @@ def analyze_legal_context_node(state: LegalState):
         
         # New extractions
         new_critical = analysis.get("extracted_critical_facts", {})
+        normalized_critical = {}
+        for k, v in new_critical.items():
+            canonical_key = CANONICAL_ALIASES.get(k, k)
+            normalized_critical[canonical_key] = v
+
+        new_critical = normalized_critical
         new_optional = analysis.get("extracted_optional_facts", {})
-        required_keys = analysis.get("required_keys_schema", [])
+        required_keys = [
+            CANONICAL_ALIASES.get(k, k)
+            for k in analysis.get("required_keys_schema", [])
+        ]
+
         intent = analysis.get("intent", "Unknown")
         
         # Metrics for Readiness
@@ -151,9 +209,12 @@ def analyze_legal_context_node(state: LegalState):
         updated_critical = current_critical.copy()
         
         for k, v in new_critical.items():
-            if not v or str(v).lower() in ["unknown", "null", "none"]:
+            v = normalize_value(v)
+
+            if v == "NOT_AVAILABLE":
+                answered_facts[k] = "NOT_AVAILABLE"
+                updated_critical[k] = "NOT_AVAILABLE"
                 continue
-                
             # Check for conflict resolution
             if k in fact_conflicts:
                 # User provided a value for a specifically conflicted field
@@ -164,16 +225,25 @@ def analyze_legal_context_node(state: LegalState):
                 resolved_conflicts_count += 1
                 
             elif k in answered_facts:
-                existing_val = answered_facts[k]
-                # If value differs significantly, flag conflict
-                # Simple string equality for now, could be fuzzier
-                if str(existing_val).strip().lower() != str(v).strip().lower():
+                existing_val = str(answered_facts[k]).strip()
+                new_val = str(v).strip()
+                
+                # 1. Exact Match: No Op
+                if existing_val.lower() == new_val.lower():
+                    pass
+                    
+                elif existing_val.lower() in new_val.lower() or new_val.lower() in existing_val.lower():
+                     # Update to the longer/more detailed version
+                     longest_val = new_val if len(new_val) > len(existing_val) else existing_val
+                     answered_facts[k] = longest_val
+                     updated_critical[k] = longest_val
+                     # Do NOT trigger conflict. Treat as reinforcement.
+                     
+                # 3. True Conflict
+                else:
                     # CONFLICT DETECTED!
                     # Do NOT overwrite. Record conflict.
                     fact_conflicts[k] = [existing_val, v]
-                else:
-                    # Same value, re-confirmed. No op.
-                    pass
             else:
                 # New fact found
                 answered_facts[k] = v
@@ -190,14 +260,14 @@ def analyze_legal_context_node(state: LegalState):
                     # Optional facts don't necessarily count for "critical" readiness but good to track
 
         # --- MISSING FIELDS CALCULATION ---
-        missing_critical_fields = []
         present_critical_count = 0
-        
+        missing_critical_fields = []
+
         for key in required_keys:
             if key in answered_facts:
-                present_critical_count += 1
-            else:
-                missing_critical_fields.append(key)
+                continue  # already answered or locked
+            missing_critical_fields.append(key)
+
                 
         # --- READINESS CALCULATION ---
         total_required = len(required_keys)
@@ -237,6 +307,9 @@ def analyze_legal_context_node(state: LegalState):
         
         # --- TRANSITION LOGIC ---
         if current_stage == "confirmation":
+            if current_turn_count - last_rejection <= 2:
+                next_step = "ask_question"
+                new_stage = "investigation"
             last_msg = messages[-1].content.lower()
             if any(x in last_msg for x in ["no", "wait", "stop", "wrong", "missing", "incorrect"]):
                 new_stage = "investigation"
@@ -335,24 +408,55 @@ def generate_question_node(state: LegalState):
         asked_facts = state.get("asked_facts", [])
         
         # STRICT FILTER: Never ask for what we have
-        filtered_missing = [f for f in missing if f not in answered_keys]
+        # TASK 4: Selection Discipline
         
+        candidate_fields = [f for f in missing if f not in answered_keys and f not in asked_facts]
+        
+        candidate_fields = [f for f in candidate_fields if f not in answered_keys]
+
+        target_field = None
+        
+        if candidate_fields:
+            # Select exactly ONE unsatisfied dimension
+            target_field = candidate_fields[0]
+            target_instruction = f"TARGET CANONICAL FIELD: '{target_field}'\nYou MUST ask a question specifically about this field."
+            
+            # Record that we are asking this fact now so we don't ask it again
+            previous_asked = set(state.get("asked_facts", []))
+
+            if target_field:
+                previous_asked.add(target_field)
+
+            asked_facts = list(previous_asked)
+
+        else:
+            # If no unsatisfied dimensions remain (or all have been asked already)
+            target_instruction = "TARGET: Check for any other overlooked details (Open-ended)."
+
         prompt = f"""
         You are a compassionate legal assistant.
         User Language: {lang}
         Intent: {intent}
-        Missing Critical Info: {filtered_missing}
+        
+        [STRICT TARGET CONTROL]
+        {target_instruction}
         
         [What we ALREADY KNOW (STRICTLY DO NOT ASK)]: {answered_keys}
+        [What we ALREADY ASKED (STRICTLY DO NOT REPEAT)]: {asked_facts}
         [RECENTLY ASKED QUESTIONS]: {recent_context}
         
+        [GLOBAL RULES]
+        1. ASK ONLY FACTUAL QUESTIONS. 
+        2. NEVER ASK about Laws, Acts, Sections, Legal Validity, or User Rights.
+        3. Allowed Categories: Event details, People involved, Time/Dates, Locations/Accounts, Financial/Emotional Impact.
+        
         Task: 
-        1. Generate ONE clear, polite follow-up question to collect the missing critical info.
+        1. Generate ONE clear, polite follow-up question strictly targeting the [TARGET CANONICAL FIELD].
         2. STRICT RULE: Do NOT ask about anything in [What we ALREADY KNOW].
         3. STRICT RULE: If 'bank_name' or 'account' is in [What we ALREADY KNOW], do NOT mention it in the question.
         4. STRICT RULE: Do NOT ask about anything mentioned in [RECENTLY ASKED QUESTIONS].
         5. Use {lang} language.
-        6. If [Missing Critical Info] is empty, ask: "Is there any other important detail or document you haven't mentioned?"
+        6. If no specific target is defined, ask: "Is there any other important factual detail you would like to add?"
         
         Return ONLY the question text in {lang}.
         """
@@ -360,7 +464,10 @@ def generate_question_node(state: LegalState):
     response = llm.invoke([HumanMessage(content=prompt)])
     question = response.content.strip().strip('"')
     
-    return {"generated_content": question}
+    return {
+        "generated_content": question,
+        "asked_facts": asked_facts
+    }
 
 # Node: Generate Document
 def generate_document_node(state: LegalState):
