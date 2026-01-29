@@ -58,6 +58,7 @@ class LegalState(TypedDict):
     
     stage: str                       # "investigation", "confirmation", "completed"
     turn_count: int                  # Turn counter to force clarification loops
+    last_input_hash: str             # Idempotency check
 
 # Node: Detect Language
 def detect_language_node(state: LegalState):
@@ -297,8 +298,11 @@ def analyze_legal_context_node(state: LegalState):
         last_rejection = state.get("last_rejection_turn", -1)
         
         # --- READINESS GATEKEEPER ---
+        # 4. MINIMUM INVESTIGATION GUARDRAIL
+        # The system must always ask at least ONE follow-up question.
+        # Confirmation or document generation must be impossible on the first user turn.
         if current_turn_count <= 2:
-            if readiness_score > 60: readiness_score = 60
+            readiness_score = min(readiness_score, 60) # Cap strictly
             
         # Check for Placeholders
         vals = list(updated_critical.values())
@@ -307,23 +311,31 @@ def analyze_legal_context_node(state: LegalState):
         
         # --- TRANSITION LOGIC ---
         if current_stage == "confirmation":
-            if current_turn_count - last_rejection <= 2:
-                next_step = "ask_question"
-                new_stage = "investigation"
+            # 5. CONFIRMATION LOCK
             last_msg = messages[-1].content.lower()
-            if any(x in last_msg for x in ["no", "wait", "stop", "wrong", "missing", "incorrect"]):
+            
+            # Explicit Rejection / Correction -> Go back to investigation
+            if any(x in last_msg for x in ["no", "wait", "stop", "wrong", "missing", "incorrect", "change", "not right"]):
                 new_stage = "investigation"
                 next_step = "ask_question"
                 last_rejection = current_turn_count
-            elif any(x in last_msg for x in ["yes", "proceed", "go", "correct", "continue", "right", "agree"]):
+                
+            # Explicit Approval -> Generate
+            elif any(x in last_msg for x in ["yes", "proceed", "go", "correct", "continue", "right", "agree", "create", "draft"]):
                 next_step = "generate_document"
+                
+            # Neutral / Chatty / Question -> Stay in Confirmation
             else:
                 next_step = "ask_confirmation" 
+                
         else:
             # Investigation stage
             # If conflicts exist, we MUST stay in investigation/questioning
             if len(fact_conflicts) > 0:
                 next_step = "ask_question"
+            # If we haven't asked at least one question (turn 1), forbid confirmation
+            elif current_turn_count < 2:
+                 next_step = "ask_question"
             elif readiness_score >= 80:
                 next_step = "ask_confirmation"
                 new_stage = "confirmation"
@@ -379,18 +391,23 @@ def generate_question_node(state: LegalState):
         conflict_vals = fact_conflicts[conflict_key]
         
         prompt = f"""
-        You are a cautious legal assistant.
-        Intent: {intent}
-        Conflict Conflict Logic: The user provided conflicting details for '{conflict_key}'.
-        Values found: {conflict_vals}
-        
-        Task:
-        1. Ask the user politely to clarify which value is correct for '{conflict_key}'.
-        2. Do NOT mention "Value 1" or "Value 2" explicitly if it sounds robotic, just contextually ask.
-        3. E.g., "You mentioned X earlier but now Y. Which account number is correct?"
-        4. Use {lang} language.
-        
-        Return ONLY the question.
+        You are a legal intake assistant.
+
+        You must ask ONLY about the following factual field.
+        You are NOT allowed to ask about anything else.
+
+        FACT_KEY: {target_field}
+
+        Rules:
+        - Ask exactly ONE question
+        - Ask ONLY about FACT_KEY
+        - Do NOT rephrase earlier questions
+        - Do NOT include examples
+        - Do NOT ask follow-up questions
+        - Do NOT ask about laws or rights
+        - Use language: {lang}
+
+        Return ONLY the question text.
         """
         
     else:
@@ -417,21 +434,19 @@ def generate_question_node(state: LegalState):
         target_field = None
         
         if candidate_fields:
-            # Select exactly ONE unsatisfied dimension
             target_field = candidate_fields[0]
-            target_instruction = f"TARGET CANONICAL FIELD: '{target_field}'\nYou MUST ask a question specifically about this field."
-            
-            # Record that we are asking this fact now so we don't ask it again
-            previous_asked = set(state.get("asked_facts", []))
-
-            if target_field:
-                previous_asked.add(target_field)
-
-            asked_facts = list(previous_asked)
-
+            asked_facts.append(target_field)
         else:
-            # If no unsatisfied dimensions remain (or all have been asked already)
-            target_instruction = "TARGET: Check for any other overlooked details (Open-ended)."
+            # HARD STOP: nothing more to ask
+            return {
+                "generated_content": (
+                    "Is there any other important factual detail you would like to add?"
+                    if state.get("user_language", "en") == "en"
+                    else "வேறு எந்த முக்கியமான விவரத்தைச் சேர்க்க விரும்புகிறீர்களா?"
+                ),
+                "asked_facts": asked_facts
+            }
+
 
         prompt = f"""
         You are a compassionate legal assistant.
@@ -547,11 +562,41 @@ except Exception as e:
 
 app = workflow.compile(checkpointer=checkpointer)
 
+import hashlib
+
 def process_message(thread_id: str, user_input: str):
     config = {"configurable": {"thread_id": thread_id}}
     
+    # 1. IDEMPOTENCY CHECK
+    # Check if this exact input was just processed to avoid duplicates/refreshes
+    current_input_hash = hashlib.md5(user_input.encode()).hexdigest()
+    
+    current_state = app.get_state(config).values
+    last_processed_hash = current_state.get("last_input_hash", "")
+    
+    if last_processed_hash == current_input_hash:
+        print(f"Idempotency: Skipping duplicate input for thread {thread_id}")
+        # Return existing state without invoking graph
+        generated_content = current_state.get("generated_content", "")
+        facts = current_state.get("legal_facts", {})
+        intent = current_state.get("intent", "")
+        score = current_state.get("readiness_score", 0)
+        next_step = current_state.get("next_step", "")
+        
+        return {
+            "content": generated_content,
+            "entities": facts,
+            "intent": intent,
+            "readiness_score": score,
+            "is_document": next_step == "generate_document"
+        }
+
+    # 2. INVOKE GRAPH
     app.invoke(
-        {"messages": [HumanMessage(content=user_input)]},
+        {
+            "messages": [HumanMessage(content=user_input)],
+            "last_input_hash": current_input_hash
+        },
         config=config
     )
     
