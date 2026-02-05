@@ -59,6 +59,7 @@ class LegalState(TypedDict):
     stage: str                       # "investigation", "confirmation", "completed"
     turn_count: int                  # Turn counter to force clarification loops
     last_input_hash: str             # Idempotency check
+    fallback_turn: int               # Turn number when fallback question was asked (-1 if not asked)
 
 # Node: Detect Language
 def detect_language_node(state: LegalState):
@@ -112,6 +113,7 @@ def analyze_legal_context_node(state: LegalState):
     
     # Increase turn count
     current_turn_count = state.get("turn_count", 0) + 1
+    fallback_turn = state.get("fallback_turn", -1)
     
     conversation_history = "\n".join([f"{m.type}: {m.content}" for m in messages])
     
@@ -297,6 +299,39 @@ def analyze_legal_context_node(state: LegalState):
         new_stage = current_stage
         last_rejection = state.get("last_rejection_turn", -1)
         
+        # --- FALLBACK QUESTION HANDLING ---
+        # If the PREVIOUS turn was the fallback question, intercept the user's answer
+        if fallback_turn == (current_turn_count - 1):
+             last_msg_clean = messages[-1].content.strip().lower()
+             
+             # Case A: "No" -> User has no more facts -> Force Confirmation
+             if last_msg_clean in ["no", "nope", "nothing", "none", "no more", "no details", "not really", "na"]:
+                 new_stage = "confirmation"
+                 next_step = "ask_confirmation"
+                 # Return immediately to bypass readiness blocks
+                 return {
+                     "legal_facts": {**state.get("legal_facts", {}), **updated_critical, **updated_optional},
+                     "critical_facts": updated_critical,
+                     "optional_facts": updated_optional,
+                     "intent": intent,
+                     "missing_fields": missing_critical_fields,
+                     "readiness_score": 100, # Force ready
+                     "next_step": next_step,
+                     "stage": new_stage,
+                     "turn_count": current_turn_count,
+                     "last_rejection_turn": last_rejection,
+                     "asked_facts": list(asked_facts),
+                     "answered_facts": answered_facts,
+                     "fact_conflicts": fact_conflicts,
+                     "fallback_turn": fallback_turn
+                 }
+
+             # Case B: "Yes" -> User has facts -> Let them talk -> Continue Investigation
+             # We do NOT reset fallback_turn because we don't want to ask "Is there anything else?" again immediately.
+             # We just let the flow proceed to generate_question, which will handle the prompt.
+             elif last_msg_clean in ["yes", "yeah", "yep", "ok", "sure"]:
+                 pass 
+
         # --- READINESS GATEKEEPER ---
         # 4. MINIMUM INVESTIGATION GUARDRAIL
         # The system must always ask at least ONE follow-up question.
@@ -357,7 +392,8 @@ def analyze_legal_context_node(state: LegalState):
             "last_rejection_turn": last_rejection,
             "asked_facts": list(asked_facts),
             "answered_facts": answered_facts,
-            "fact_conflicts": fact_conflicts
+            "fact_conflicts": fact_conflicts,
+            "fallback_turn": fallback_turn
         }
     except Exception as e:
         print(f"Error parsing analysis: {e}")
@@ -374,6 +410,8 @@ def generate_question_node(state: LegalState):
     missing = state.get("missing_fields", [])
     next_step = state.get("next_step", "ask_question")
     messages = state.get("messages", [])
+    current_turn = state.get("turn_count", 0)
+    fallback_turn = state.get("fallback_turn", -1)
     
     fact_conflicts = state.get("fact_conflicts", {})
     
@@ -437,14 +475,45 @@ def generate_question_node(state: LegalState):
             target_field = candidate_fields[0]
             asked_facts.append(target_field)
         else:
-            # HARD STOP: nothing more to ask
+            # HARD STOP: nothing more to specific to ask
+            
+            # CHECK: Have we already asked the fallback question?
+            if fallback_turn > -1:
+                # YES, we already asked it.
+                # Do NOT ask it again.
+                
+                # Check if user just said "Yes" (indicating they want to talk)
+                last_msg_clean = messages[-1].content.strip().lower()
+                if last_msg_clean in ["yes", "yeah", "yep", "ok", "sure"]:
+                    return {
+                        "generated_content": (
+                            "Please go ahead and share the details."
+                             if state.get("user_language", "en") == "en"
+                             else "தயவுசெய்து விவரங்களைப் பகிரவும்."
+                        ),
+                        "asked_facts": asked_facts
+                    }
+                
+                # Otherwise, if we have no questions and already asked fallback -> Confirmation
+                return {
+                     "generated_content": (
+                        "I have sufficient information to proceed. Shall I continue?"
+                        if state.get("user_language", "en") == "en"
+                        else "தொடர போதுமான தகவல்கள் என்னிடம் உள்ளன. நான் தொடரலாமா?"
+                     ),
+                     "next_step": "ask_confirmation", # Force transition
+                     "asked_facts": asked_facts
+                }
+
+            # First time asking fallback?
             return {
                 "generated_content": (
                     "Is there any other important factual detail you would like to add?"
                     if state.get("user_language", "en") == "en"
                     else "வேறு எந்த முக்கியமான விவரத்தைச் சேர்க்க விரும்புகிறீர்களா?"
                 ),
-                "asked_facts": asked_facts
+                "asked_facts": asked_facts,
+                "fallback_turn": current_turn # Mark as asked
             }
 
 

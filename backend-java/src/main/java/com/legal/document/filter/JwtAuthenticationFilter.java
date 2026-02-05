@@ -37,9 +37,16 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             token = authHeader.substring(7);
             try {
                 phoneNumber = jwtUtil.getPhoneNumberFromToken(token);
+            } catch (io.jsonwebtoken.ExpiredJwtException e) {
+                logger.warn("JWT Token expired: " + e.getMessage());
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.getWriter().write("JWT Token expired");
+                return;
             } catch (Exception e) {
-                // Invalid token
                 logger.error("Invalid JWT token: " + e.getMessage());
+                response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                response.getWriter().write("Invalid JWT token");
+                return;
             }
         }
 
