@@ -144,6 +144,8 @@ def analyze_legal_context_node(state: LegalState):
     5. **Impact Dimension**:
        - Key: `financial_loss_value` (Monetary impact)
        - Key: `harm_description` (Non-monetary harm)
+    6. **Evidence Dimension**:
+       - Key: `evidence_available` (Documents like Salary Slips, Offer Letter, Termination Letter, Contracts)
 
     [CONSISTENCY & REDUNDANCY CHECK]
     - **Normalization**: If the user says "My husband hit me" -> extract 'primary_event_overview': "Physical assault per user". 
@@ -413,6 +415,9 @@ def generate_question_node(state: LegalState):
     current_turn = state.get("turn_count", 0)
     fallback_turn = state.get("fallback_turn", -1)
     
+    # Initialize SAFE DEFAULT for asked_facts here to prevent UnboundLocalError
+    asked_facts = state.get("asked_facts", [])
+    
     fact_conflicts = state.get("fact_conflicts", {})
     
     if next_step == "ask_confirmation":
@@ -426,6 +431,7 @@ def generate_question_node(state: LegalState):
         # CONFLICT RESOLUTION MODE
         # Pick the first conflict to resolve
         conflict_key = list(fact_conflicts.keys())[0]
+        target_field = conflict_key # Ensure target_field is defined for prompt usage
         conflict_vals = fact_conflicts[conflict_key]
         
         prompt = f"""
@@ -460,7 +466,7 @@ def generate_question_node(state: LegalState):
         else:
             answered_keys = list(raw_answered) # Fallback if list
             
-        asked_facts = state.get("asked_facts", [])
+        # asked_facts is already initialized at top
         
         # STRICT FILTER: Never ask for what we have
         # TASK 4: Selection Discipline
@@ -474,6 +480,7 @@ def generate_question_node(state: LegalState):
         if candidate_fields:
             target_field = candidate_fields[0]
             asked_facts.append(target_field)
+            target_instruction = f"Target missing field: {target_field}"
         else:
             # HARD STOP: nothing more to specific to ask
             
@@ -560,14 +567,64 @@ def generate_document_node(state: LegalState):
     score = state.get("readiness_score", 0)
     
     prompt = f"""
-    Generate a formal legal draft/document.
+    You are an AI Legal Assistant integrated into a legal document automation system.
+
+    [INPUT CONTEXT]
     Intent: {intent}
-    Facts: {json.dumps(facts)}
+    Retrieved Facts: {json.dumps(facts)}
+
+    --------------------------------
+    TASK
+    --------------------------------
+    1. Analyze the legal problem based on the Intent and Facts.
+    2. Identify the specific legal category (e.g., Employment Dispute, Unpaid Salary, Contract Violation).
+    3. Generate a jurisdiction-aware legal document.
+    4. Compute a FINAL readiness score based on the specific evidence rules below.
+
+    --------------------------------
+    JURISDICTION RULES
+    --------------------------------
+    If COUNTRY = India (or implied by context like INR/Rupees/Indian Cities):
+    - Refer to:
+      • Payment of Wages Act, 1936
+      • Industrial Disputes Act, 1947
+    - Use Indian legal language and conventions.
+
+    If country is unknown:
+    - Use neutral legal terminology without citing specific statutes.
+
+    --------------------------------
+    DOCUMENT GENERATION RULES
+    --------------------------------
+    • Generate ONE complete legal document.
+    • Use formal legal structure: Title, Parties, Jurisdiction, Facts, Legal Grounds, Relief Sought.
+    • EXTRACT and MAP facts to these entities if available:
+      - EMPLOYEE_NAME, EMPLOYER_NAME, COMPANY_NAME
+      - POSITION, DURATION, SALARY_AMOUNT, UNPAID_AMOUNT
+      - TERMINATION_TYPE, EVIDENCE_AVAILABLE
+    • Use placeholders (e.g., "[EMPLOYEE NAME]") ONLY IF data is missing.
+    • Do NOT hallucinate names, dates, or amounts.
+
+    --------------------------------
+    READINESS SCORE RULES (CALCULATE THIS NOW)
+    --------------------------------
+    Scan the 'evidence_available' or facts for these items. Add points:
+    - Offer Letter → +25 points
+    - Salary Slips → +25 points
+    - Bank Statements → +25 points
+    - Termination Proof → +25 points
     
-    Header: "Readiness Score: {score}/100"
+    (Max 100).
+    Example: If 3 out of 4 are present → Score = 75/100.
     
-    If score < 100, include a disclaimer about missing details.
-    Format as a proper legal document.
+    DISPLAY THE SCORE ONCE AT THE END in this format:
+    "**Final Readiness Score**: X/100 (Based on provided evidence: List Evidence)"
+
+    --------------------------------
+    DISCLAIMER Rules
+    --------------------------------
+    • Include ONLY ONE disclaimer at the very bottom.
+    • Text: "This document is AI-generated for informational purposes and does not constitute legal advice. Consultation with a qualified legal professional is recommended."
     """
     
     response = llm.invoke([HumanMessage(content=prompt)])
