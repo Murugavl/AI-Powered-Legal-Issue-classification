@@ -167,10 +167,21 @@ def analyze_legal_context_node(state: LegalState):
     [CONVERSATION HISTORY]
     {conversation_history}
     
+    [SAFETY CHECK (CRITICAL)]
+    Analyze if the user input involves:
+    - Immediate danger to life
+    - Violence / Physical Assault (ongoing or planned)
+    - Serious criminal activity (not just civil disputes)
+    - Emergency situations
+    
+    If ANY of these are detected, set "safety_status": "UNSAFE" and "safety_reason": "Reason...".
+    Otherwise, set "safety_status": "SAFE".
+
     [OUTPUT FORMAT]
     Return a VALID JSON object (no markdown):
     {{
         "intent": "string",
+        "safety_status": "SAFE" or "UNSAFE",
         "extracted_critical_facts": {{ "CANONICAL_KEY": "value" }},
         "extracted_optional_facts": {{ "CANONICAL_KEY": "value" }},
         "required_keys_schema": ["CANONICAL_KEY_1", "CANONICAL_KEY_2"]
@@ -204,6 +215,25 @@ def analyze_legal_context_node(state: LegalState):
         ]
 
         intent = analysis.get("intent", "Unknown")
+        
+        # --- SAFETY CHECK ---
+        if analysis.get("safety_status") == "UNSAFE":
+             return {
+                 "legal_facts": state.get("legal_facts", {}),
+                 "critical_facts": {},
+                 "optional_facts": {},
+                 "intent": "SAFETY_REFUSAL",
+                 "missing_fields": [],
+                 "readiness_score": 0,
+                 "next_step": "refusal",
+                 "stage": "completed",
+                 "turn_count": current_turn_count,
+                 "last_rejection_turn": -1,
+                 "asked_facts": [],
+                 "answered_facts": {},
+                 "fact_conflicts": {},
+                 "fallback_turn": -1
+             }
         
         # Metrics for Readiness
         newly_added_facts_count = 0
@@ -264,6 +294,38 @@ def analyze_legal_context_node(state: LegalState):
                     updated_optional[k] = v
                     # Optional facts don't necessarily count for "critical" readiness but good to track
 
+                    # Optional facts don't necessarily count for "critical" readiness but good to track
+
+        # --- MODE 2 EXPRESS TRIGGER (STRICT) ---
+        last_msg_clean = messages[-1].content.strip().lower()
+        
+        # 1. Explicit Completion Commands -> Move to CONFIRMATION (Stage 2)
+        # User explicitly says they are done or wants to generate.
+        # We DO NOT generate immediately. We must go to Confirmation FIRST.
+        gen_triggers = ["proceed", "generate", "continue", "draft", "make document", "no more details", "no more info", "nothing else to add", "nothing more", "done"]
+        is_explicit_trigger = any(t in last_msg_clean for t in gen_triggers)
+        
+        # 2. Ambiguous "Yes" Fail-Safe (Only if NO new facts were extracted)
+        is_ambiguous_yes = (newly_added_facts_count == 0) and (last_msg_clean in ["yes", "yeah", "yep", "ok", "okay", "sure", "fine", "go ahead"])
+
+        if is_explicit_trigger or is_ambiguous_yes:
+             return {
+                 "legal_facts": {**state.get("legal_facts", {}), **updated_critical, **updated_optional},
+                 "critical_facts": updated_critical,
+                 "optional_facts": updated_optional,
+                 "intent": intent,
+                 "missing_fields": [], # Clear missing to prevent loop
+                 "readiness_score": 100, # Force Internal Completeness
+                 "next_step": "ask_confirmation", # GO TO CONFIRMATION (Stage 2)
+                 "stage": "confirmation", # Set Stage 2
+                 "turn_count": current_turn_count,
+                 "last_rejection_turn": state.get("last_rejection_turn", -1),
+                 "asked_facts": list(asked_facts),
+                 "answered_facts": answered_facts,
+                 "fact_conflicts": fact_conflicts,
+                 "fallback_turn": fallback_turn
+             }
+
         # --- MISSING FIELDS CALCULATION ---
         present_critical_count = 0
         missing_critical_fields = []
@@ -306,8 +368,8 @@ def analyze_legal_context_node(state: LegalState):
         if fallback_turn == (current_turn_count - 1):
              last_msg_clean = messages[-1].content.strip().lower()
              
-             # Case A: "No" -> User has no more facts -> Force Confirmation
-             if last_msg_clean in ["no", "nope", "nothing", "none", "no more", "no details", "not really", "na"]:
+             # Case A: "No" or "Done" -> User has no more facts -> Force Confirmation
+             if last_msg_clean in ["no", "nope", "nothing", "none", "no more", "no details", "not really", "na", "done"]:
                  new_stage = "confirmation"
                  next_step = "ask_confirmation"
                  # Return immediately to bypass readiness blocks
@@ -317,7 +379,7 @@ def analyze_legal_context_node(state: LegalState):
                      "optional_facts": updated_optional,
                      "intent": intent,
                      "missing_fields": missing_critical_fields,
-                     "readiness_score": 100, # Force ready
+                     "readiness_score": 100, # Force valid
                      "next_step": next_step,
                      "stage": new_stage,
                      "turn_count": current_turn_count,
@@ -348,20 +410,23 @@ def analyze_legal_context_node(state: LegalState):
         
         # --- TRANSITION LOGIC ---
         if current_stage == "confirmation":
-            # 5. CONFIRMATION LOCK
-            last_msg = messages[-1].content.lower()
+            # 5. CONFIRMATION LOCK (STAGE 2 -> STAGE 3)
+            last_msg = messages[-1].content.strip().upper() # Normalize to UPPER for strict check
             
-            # Explicit Rejection / Correction -> Go back to investigation
-            if any(x in last_msg for x in ["no", "wait", "stop", "wrong", "missing", "incorrect", "change", "not right"]):
+            # Explicit Rejection / Edit -> Go back to investigation
+            # Keyword: EDIT
+            if "EDIT" in last_msg or "CHANGE" in last_msg or "WRONG" in last_msg:
                 new_stage = "investigation"
                 next_step = "ask_question"
                 last_rejection = current_turn_count
                 
             # Explicit Approval -> Generate
-            elif any(x in last_msg for x in ["yes", "proceed", "go", "correct", "continue", "right", "agree", "create", "draft"]):
+            # STRICT KEYWORD: "CONFIRM"
+            elif "CONFIRM" in last_msg:
                 next_step = "generate_document"
+                new_stage = "completed"
                 
-            # Neutral / Chatty / Question -> Stay in Confirmation
+            # Anything else -> Repeat Confirmation Question
             else:
                 next_step = "ask_confirmation" 
                 
@@ -420,12 +485,31 @@ def generate_question_node(state: LegalState):
     
     fact_conflicts = state.get("fact_conflicts", {})
     
+    if next_step == "refusal":
+        return {
+            "generated_content": "I cannot assist with this request. If you are in immediate danger or facing an emergency, please contact the police or emergency services immediately. This system is for legal documentation assistance only.",
+            "asked_facts": asked_facts
+        }
+    
     if next_step == "ask_confirmation":
-        # Confirmation Question
+        # Confirmation Question (STAGE 2)
+        summary_points = []
+        for k, v in state.get("answered_facts", {}).items():
+            summary_points.append(f"- {k}: {v}")
+        summary_text = "\n".join(summary_points)
+
         prompt = f"""
-        Translate this to {lang}:
-        "I have sufficient information to proceed with drafting the legal document. Shall I continue?"
-        Return ONLY the translated text.
+        Translate the following message to {lang}.
+        Keep the keywords 'CONFIRM' and 'EDIT' in English if appropriate, or provide the local equivalent but emphasize the strict command.
+        
+        Context:
+        {summary_text}
+
+        Message:
+        "Please confirm if the above details are correct.
+        Type CONFIRM to generate the document or EDIT to modify."
+        
+        Return ONLY the translated 'Please confirm...' message.
         """
     elif len(fact_conflicts) > 0:
         # CONFLICT RESOLUTION MODE
@@ -494,9 +578,9 @@ def generate_question_node(state: LegalState):
                 if last_msg_clean in ["yes", "yeah", "yep", "ok", "sure"]:
                     return {
                         "generated_content": (
-                            "Please go ahead and share the details."
-                             if state.get("user_language", "en") == "en"
-                             else "தயவுசெய்து விவரங்களைப் பகிரவும்."
+                            "Please type the additional details. If there are no more details, type DONE."
+                                if state.get("user_language", "en") == "en"
+                                else "கூடுதல் விவரங்களை உள்ளிடவும். கூடுதல் விவரங்கள் இல்லை என்றால், DONE என டைப் செய்யவும்."
                         ),
                         "asked_facts": asked_facts
                     }
@@ -504,9 +588,9 @@ def generate_question_node(state: LegalState):
                 # Otherwise, if we have no questions and already asked fallback -> Confirmation
                 return {
                      "generated_content": (
-                        "I have sufficient information to proceed. Shall I continue?"
+                        "Please type the additional details. If there are no more details, type DONE."
                         if state.get("user_language", "en") == "en"
-                        else "தொடர போதுமான தகவல்கள் என்னிடம் உள்ளன. நான் தொடரலாமா?"
+                        else "கூடுதல் விவரங்களை உள்ளிடவும். கூடுதல் விவரங்கள் இல்லை என்றால், DONE என டைப் செய்யவும்."
                      ),
                      "next_step": "ask_confirmation", # Force transition
                      "asked_facts": asked_facts
@@ -515,9 +599,9 @@ def generate_question_node(state: LegalState):
             # First time asking fallback?
             return {
                 "generated_content": (
-                    "Is there any other important factual detail you would like to add?"
+                    "Please type the additional details. If there are no more details, type DONE."
                     if state.get("user_language", "en") == "en"
-                    else "வேறு எந்த முக்கியமான விவரத்தைச் சேர்க்க விரும்புகிறீர்களா?"
+                    else "கூடுதல் விவரங்களை உள்ளிடவும். கூடுதல் விவரங்கள் இல்லை என்றால், DONE என டைப் செய்யவும்."
                 ),
                 "asked_facts": asked_facts,
                 "fallback_turn": current_turn # Mark as asked
@@ -579,7 +663,7 @@ def generate_document_node(state: LegalState):
     1. Analyze the legal problem based on the Intent and Facts.
     2. Identify the specific legal category (e.g., Employment Dispute, Unpaid Salary, Contract Violation).
     3. Generate a jurisdiction-aware legal document.
-    4. Compute a FINAL readiness score based on the specific evidence rules below.
+    4. Compute a FINAL readiness score based ONLY on the evidence known.
 
     --------------------------------
     JURISDICTION RULES
@@ -588,43 +672,48 @@ def generate_document_node(state: LegalState):
     - Refer to:
       • Payment of Wages Act, 1936
       • Industrial Disputes Act, 1947
+      • Or other relevant Indian Acts.
     - Use Indian legal language and conventions.
 
     If country is unknown:
     - Use neutral legal terminology without citing specific statutes.
 
     --------------------------------
-    DOCUMENT GENERATION RULES
+    DOCUMENT GENERATION RULES (STAGE 3)
     --------------------------------
-    • Generate ONE complete legal document.
+    • Generate ONE complete legal draft document.
+    • Follow authority-specific formatting (police complaint, consumer complaint, legal notice, etc.).
     • Use formal legal structure: Title, Parties, Jurisdiction, Facts, Legal Grounds, Relief Sought.
-    • EXTRACT and MAP facts to these entities if available:
-      - EMPLOYEE_NAME, EMPLOYER_NAME, COMPANY_NAME
-      - POSITION, DURATION, SALARY_AMOUNT, UNPAID_AMOUNT
-      - TERMINATION_TYPE, EVIDENCE_AVAILABLE
-    • Use placeholders (e.g., "[EMPLOYEE NAME]") ONLY IF data is missing.
+    • Use neutral and factual language.
+    • Do NOT include legal conclusions or predictions.
     • Do NOT hallucinate names, dates, or amounts.
+    • Replace placeholders ONLY if data is explicitly provided in Facts.
 
     --------------------------------
-    READINESS SCORE RULES (CALCULATE THIS NOW)
+    READINESS SCORE RULES
     --------------------------------
-    Scan the 'evidence_available' or facts for these items. Add points:
-    - Offer Letter → +25 points
-    - Salary Slips → +25 points
-    - Bank Statements → +25 points
-    - Termination Proof → +25 points
+    Calculate readiness score based on available evidence in 'facts' or 'evidence_available':
     
-    (Max 100).
-    Example: If 3 out of 4 are present → Score = 75/100.
-    
-    DISPLAY THE SCORE ONCE AT THE END in this format:
-    "**Final Readiness Score**: X/100 (Based on provided evidence: List Evidence)"
+    • Invoice / Agreement → +25
+    • Proof of payment → +25
+    • Written communication (emails/messages) → +25
+    • Proof of possession / return / delivery → +25
 
+    Score minimum 0, maximum 100.
+    Score must be realistic and explained in one sentence.
+    
     --------------------------------
-    DISCLAIMER Rules
+    OUTPUT FORMAT (STRICT)
     --------------------------------
-    • Include ONLY ONE disclaimer at the very bottom.
-    • Text: "This document is AI-generated for informational purposes and does not constitute legal advice. Consultation with a qualified legal professional is recommended."
+    Output ONLY these 4 parts in order:
+
+    # [Document Title]
+    
+    [Full Formatted Legal Draft Document]
+    
+    **Readiness Score**: [Score]/100 (Explanation: [One sentence explanation])
+    
+    _Disclaimer: This document is auto-generated for assistance purposes only and does not constitute legal advice. Users are advised to consult a qualified legal professional before filing or submitting this document._
     """
     
     response = llm.invoke([HumanMessage(content=prompt)])
@@ -652,7 +741,9 @@ workflow.add_conditional_edges(
     {
         "ask_question": "generate_question",
         "ask_confirmation": "generate_question", # Re-use generic question node but with different prompt logic
-        "generate_document": "generate_document"
+        "refusal": "generate_question", # Handle safety refusal in question node
+        "generate_document": "generate_document",
+        "completed": "generate_document" # Safety edge if stage is completed
     }
 )
 
