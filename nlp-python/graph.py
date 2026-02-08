@@ -8,6 +8,7 @@ from langchain_core.output_parsers import JsonOutputParser
 
 # Import shared LLM provider
 from llm_provider import llm
+from bilingual_generator import generate_bilingual_document
 
 # Normalize user answers so "No / Unknown" are terminal
 def normalize_value(v):
@@ -266,6 +267,11 @@ def analyze_legal_context_node(state: LegalState):
                 # 1. Exact Match: No Op
                 if existing_val.lower() == new_val.lower():
                     pass
+                
+                # Global Constraint: DO NOT MODIFY numeric values
+                elif any(char.isdigit() for char in new_val) and new_val != existing_val:
+                     # If conflicting numbers, trigger conflict resolution
+                     fact_conflicts[k] = [existing_val, v]
                     
                 elif existing_val.lower() in new_val.lower() or new_val.lower() in existing_val.lower():
                      # Update to the longer/more detailed version
@@ -499,17 +505,17 @@ def generate_question_node(state: LegalState):
         summary_text = "\n".join(summary_points)
 
         prompt = f"""
-        Translate the following message to {lang}.
-        Keep the keywords 'CONFIRM' and 'EDIT' in English if appropriate, or provide the local equivalent but emphasize the strict command.
-        
+        Translate the following message to {lang} ONLY if the user is not speaking English.
+        If the user is speaking English, keep it exactly as is.
+
         Context:
         {summary_text}
 
         Message:
-        "Please confirm if the above details are correct.
-        Type CONFIRM to generate the document or EDIT to modify."
+        "Please confirm the above details.
+        Type CONFIRM to generate the document or EDIT to make changes."
         
-        Return ONLY the translated 'Please confirm...' message.
+        Return ONLY the final message content.
         """
     elif len(fact_conflicts) > 0:
         # CONFLICT RESOLUTION MODE
@@ -644,82 +650,53 @@ def generate_question_node(state: LegalState):
         "asked_facts": asked_facts
     }
 
-# Node: Generate Document
+# Node: Generate Document (Bilingual)
 def generate_document_node(state: LegalState):
     facts = state.get("legal_facts", {})
     intent = state.get("intent", "Legal Document")
-    score = state.get("readiness_score", 0)
+    lang = state.get("user_language", "en")
     
-    prompt = f"""
-    You are an AI Legal Assistant integrated into a legal document automation system.
-
-    [INPUT CONTEXT]
-    Intent: {intent}
-    Retrieved Facts: {json.dumps(facts)}
-
-    --------------------------------
-    TASK
-    --------------------------------
-    1. Analyze the legal problem based on the Intent and Facts.
-    2. Identify the specific legal category (e.g., Employment Dispute, Unpaid Salary, Contract Violation).
-    3. Generate a jurisdiction-aware legal document.
-    4. Compute a FINAL readiness score based ONLY on the evidence known.
-
-    --------------------------------
-    JURISDICTION RULES
-    --------------------------------
-    If COUNTRY = India (or implied by context like INR/Rupees/Indian Cities):
-    - Refer to:
-      • Payment of Wages Act, 1936
-      • Industrial Disputes Act, 1947
-      • Or other relevant Indian Acts.
-    - Use Indian legal language and conventions.
-
-    If country is unknown:
-    - Use neutral legal terminology without citing specific statutes.
-
-    --------------------------------
-    DOCUMENT GENERATION RULES (STAGE 3)
-    --------------------------------
-    • Generate ONE complete legal draft document.
-    • Follow authority-specific formatting (police complaint, consumer complaint, legal notice, etc.).
-    • Use formal legal structure: Title, Parties, Jurisdiction, Facts, Legal Grounds, Relief Sought.
-    • Use neutral and factual language.
-    • Do NOT include legal conclusions or predictions.
-    • Do NOT hallucinate names, dates, or amounts.
-    • Replace placeholders ONLY if data is explicitly provided in Facts.
-
-    --------------------------------
-    READINESS SCORE RULES
-    --------------------------------
-    Calculate readiness score based on available evidence in 'facts' or 'evidence_available':
+    # Generate bilingual document
+    bilingual_result = generate_bilingual_document(intent, facts, lang)
     
-    • Invoice / Agreement → +25
-    • Proof of payment → +25
-    • Written communication (emails/messages) → +25
-    • Proof of possession / return / delivery → +25
+    # Format the output for frontend
+    output = {
+        "user_language_content": bilingual_result["user_language_content"],
+        "english_content": bilingual_result["english_content"],
+        "document_type": bilingual_result["document_type"],
+        "readiness_score": bilingual_result["readiness_score"],
+        "user_language": lang,
+        "is_bilingual": True
+    }
+    
+    # For backward compatibility, also set generated_content
+    # This will be the user language version for display
+    generated_content = f"""# Legal Document - {bilingual_result['document_type'].replace('_', ' ').title()}
 
-    Score minimum 0, maximum 100.
-    Score must be realistic and explained in one sentence.
-    
-    --------------------------------
-    OUTPUT FORMAT (STRICT)
-    --------------------------------
-    Output ONLY these 4 parts in order:
+**Language**: {lang.upper()} + English (Bilingual)
+**Readiness Score**: {bilingual_result['readiness_score']}/100
 
-    # [Document Title]
+---
+
+## Version in Your Language ({lang.upper()})
+
+{bilingual_result['user_language_content']}
+
+---
+
+## English Version (For Official Submission)
+
+{bilingual_result['english_content']}
+
+---
+
+**Note**: This document has been generated in both languages. The bilingual PDF will contain both versions for your convenience.
+"""
     
-    [Full Formatted Legal Draft Document]
-    
-    **Readiness Score**: [Score]/100 (Explanation: [One sentence explanation])
-    
-    _Disclaimer: This document is auto-generated for assistance purposes only and does not constitute legal advice. Users are advised to consult a qualified legal professional before filing or submitting this document._
-    """
-    
-    response = llm.invoke([HumanMessage(content=prompt)])
-    document = response.content.strip()
-    
-    return {"generated_content": document}
+    return {
+        "generated_content": generated_content,
+        "bilingual_document": output
+    }
 
 # Define the Graph
 workflow = StateGraph(LegalState)

@@ -1,6 +1,8 @@
 package com.legal.document.controller;
 
 import com.legal.document.service.PdfGeneratorService;
+import com.legal.document.service.BilingualPdfService;
+import com.lowagie.text.DocumentException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -69,5 +71,63 @@ public class DocumentController {
                 .header("Content-Disposition", "attachment; filename=legal_document.pdf")
                 .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
                 .body(pdf);
+    }
+
+    @Autowired
+    private BilingualPdfService bilingualPdfService;
+
+    /**
+     * Generate bilingual PDF (user language + English)
+     * Expected payload:
+     * {
+     * "user_language_content": "...",
+     * "english_content": "...",
+     * "user_language": "ta",
+     * "reference_number": "LDA-2026-000001",
+     * "document_type": "police_complaint",
+     * "metadata": {...}
+     * }
+     */
+    @PostMapping("/generate-bilingual")
+    public ResponseEntity<byte[]> generateBilingualPdf(@RequestBody Map<String, Object> payload) {
+        try {
+            String userLanguageContent = (String) payload.get("user_language_content");
+            String englishContent = (String) payload.get("english_content");
+            String userLanguage = (String) payload.getOrDefault("user_language", "en");
+            String referenceNumber = (String) payload.get("reference_number");
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> metadata = (Map<String, Object>) payload.getOrDefault("metadata", new HashMap<>());
+
+            // Add document type to metadata
+            if (payload.containsKey("document_type")) {
+                metadata.put("Document Type", payload.get("document_type"));
+            }
+            if (payload.containsKey("readiness_score")) {
+                metadata.put("Readiness Score", payload.get("readiness_score") + "/100");
+            }
+
+            byte[] pdf = bilingualPdfService.generateBilingualPdf(
+                    userLanguageContent,
+                    englishContent,
+                    userLanguage,
+                    referenceNumber,
+                    metadata);
+
+            String filename = "legal_document_" +
+                    (referenceNumber != null ? referenceNumber : "draft") + ".pdf";
+
+            return ResponseEntity.ok()
+                    .header("Content-Disposition", "attachment; filename=" + filename)
+                    .contentType(org.springframework.http.MediaType.APPLICATION_PDF)
+                    .body(pdf);
+
+        } catch (DocumentException e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError().build();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().build();
+        }
     }
 }

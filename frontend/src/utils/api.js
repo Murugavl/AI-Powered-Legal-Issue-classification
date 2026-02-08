@@ -76,6 +76,9 @@ export const documentAPI = {
   generate: (data) => api.post('/documents/generate', data, {
     responseType: 'blob',
   }),
+  generateBilingual: (data) => api.post('/documents/generate-bilingual', data, {
+    responseType: 'blob',
+  }),
 };
 
 // NLP API
