@@ -476,179 +476,285 @@ def analyze_legal_context_node(state: LegalState):
             "stage": current_stage
         }
 
-# Node: Generate Question
+# Node: Generate Question (Structured Interview Approach)
 def generate_question_node(state: LegalState):
     lang = state.get("user_language", "en")
     intent = state.get("intent", "General Legal Issue")
-    missing = state.get("missing_fields", [])
     next_step = state.get("next_step", "ask_question")
     messages = state.get("messages", [])
     current_turn = state.get("turn_count", 0)
-    fallback_turn = state.get("fallback_turn", -1)
     
-    # Initialize SAFE DEFAULT for asked_facts here to prevent UnboundLocalError
     asked_facts = state.get("asked_facts", [])
-    
+    answered_facts = state.get("answered_facts", {})
     fact_conflicts = state.get("fact_conflicts", {})
     
+    # Safety refusal
     if next_step == "refusal":
         return {
             "generated_content": "I cannot assist with this request. If you are in immediate danger or facing an emergency, please contact the police or emergency services immediately. This system is for legal documentation assistance only.",
             "asked_facts": asked_facts
         }
     
+    # Confirmation stage
     if next_step == "ask_confirmation":
-        # Confirmation Question (STAGE 2)
         summary_points = []
-        for k, v in state.get("answered_facts", {}).items():
-            summary_points.append(f"- {k}: {v}")
-        summary_text = "\n".join(summary_points)
-
-        prompt = f"""
-        Translate the following message to {lang} ONLY if the user is not speaking English.
-        If the user is speaking English, keep it exactly as is.
-
-        Context:
-        {summary_text}
-
-        Message:
-        "Please confirm the above details.
-        Type CONFIRM to generate the document or EDIT to make changes."
+        for k, v in answered_facts.items():
+            if v != "NOT_AVAILABLE":
+                display_key = k.replace("_", " ").title()
+                summary_points.append(f"• {display_key}: {v}")
         
-        Return ONLY the final message content.
-        """
-    elif len(fact_conflicts) > 0:
-        # CONFLICT RESOLUTION MODE
-        # Pick the first conflict to resolve
+        summary_text = "\n".join(summary_points) if summary_points else "No details collected yet."
+        
+        confirmation_msg = f"""Based on our conversation, here's what I've understood:
+
+{summary_text}
+
+Please review the above information carefully.
+• Type CONFIRM if everything is correct and you want to generate the document
+• Type EDIT if you want to make changes or add more information"""
+        
+        # Translate if needed
+        if lang != "en":
+            prompt = f"""Translate the following message to {lang}, maintaining the structure and formatting:
+
+{confirmation_msg}
+
+Return ONLY the translated message."""
+            response = llm.invoke([HumanMessage(content=prompt)])
+            confirmation_msg = response.content.strip()
+        
+        return {
+            "generated_content": confirmation_msg,
+            "asked_facts": asked_facts
+        }
+    
+    # Conflict resolution
+    if len(fact_conflicts) > 0:
         conflict_key = list(fact_conflicts.keys())[0]
-        target_field = conflict_key # Ensure target_field is defined for prompt usage
         conflict_vals = fact_conflicts[conflict_key]
         
-        prompt = f"""
-        You are a legal intake assistant.
-
-        You must ask ONLY about the following factual field.
-        You are NOT allowed to ask about anything else.
-
-        FACT_KEY: {target_field}
-
-        Rules:
-        - Ask exactly ONE question
-        - Ask ONLY about FACT_KEY
-        - Do NOT rephrase earlier questions
-        - Do NOT include examples
-        - Do NOT ask follow-up questions
-        - Do NOT ask about laws or rights
-        - Use language: {lang}
-
-        Return ONLY the question text.
-        """
+        question = f"I noticed conflicting information about {conflict_key.replace('_', ' ')}. You mentioned both '{conflict_vals[0]}' and '{conflict_vals[1]}'. Which one is correct?"
         
-    else:
-        # MEMORY GUARD checks
-        recent_ai_msgs = [m.content for m in messages if isinstance(m, AIMessage)][-2:]
-        recent_context = "\n".join(recent_ai_msgs)
+        if lang != "en":
+            prompt = f"Translate to {lang}: {question}"
+            response = llm.invoke([HumanMessage(content=prompt)])
+            question = response.content.strip()
         
-        # Handling Answered Facts
-        raw_answered = state.get("answered_facts", {})
-        if isinstance(raw_answered, dict):
-            answered_keys = list(raw_answered.keys())
-        else:
-            answered_keys = list(raw_answered) # Fallback if list
-            
-        # asked_facts is already initialized at top
-        
-        # STRICT FILTER: Never ask for what we have
-        # TASK 4: Selection Discipline
-        
-        candidate_fields = [f for f in missing if f not in answered_keys and f not in asked_facts]
-        
-        candidate_fields = [f for f in candidate_fields if f not in answered_keys]
-
-        target_field = None
-        
-        if candidate_fields:
-            target_field = candidate_fields[0]
-            asked_facts.append(target_field)
-            target_instruction = f"Target missing field: {target_field}"
-        else:
-            # HARD STOP: nothing more to specific to ask
-            
-            # CHECK: Have we already asked the fallback question?
-            if fallback_turn > -1:
-                # YES, we already asked it.
-                # Do NOT ask it again.
-                
-                # Check if user just said "Yes" (indicating they want to talk)
-                last_msg_clean = messages[-1].content.strip().lower()
-                if last_msg_clean in ["yes", "yeah", "yep", "ok", "sure"]:
-                    return {
-                        "generated_content": (
-                            "Please type the additional details. If there are no more details, type DONE."
-                                if state.get("user_language", "en") == "en"
-                                else "கூடுதல் விவரங்களை உள்ளிடவும். கூடுதல் விவரங்கள் இல்லை என்றால், DONE என டைப் செய்யவும்."
-                        ),
-                        "asked_facts": asked_facts
-                    }
-                
-                # Otherwise, if we have no questions and already asked fallback -> Confirmation
-                return {
-                     "generated_content": (
-                        "Please type the additional details. If there are no more details, type DONE."
-                        if state.get("user_language", "en") == "en"
-                        else "கூடுதல் விவரங்களை உள்ளிடவும். கூடுதல் விவரங்கள் இல்லை என்றால், DONE என டைப் செய்யவும்."
-                     ),
-                     "next_step": "ask_confirmation", # Force transition
-                     "asked_facts": asked_facts
-                }
-
-            # First time asking fallback?
-            return {
-                "generated_content": (
-                    "Please type the additional details. If there are no more details, type DONE."
-                    if state.get("user_language", "en") == "en"
-                    else "கூடுதல் விவரங்களை உள்ளிடவும். கூடுதல் விவரங்கள் இல்லை என்றால், DONE என டைப் செய்யவும்."
-                ),
-                "asked_facts": asked_facts,
-                "fallback_turn": current_turn # Mark as asked
-            }
-
-
-        prompt = f"""
-        You are a compassionate legal assistant.
-        User Language: {lang}
-        Intent: {intent}
-        
-        [STRICT TARGET CONTROL]
-        {target_instruction}
-        
-        [What we ALREADY KNOW (STRICTLY DO NOT ASK)]: {answered_keys}
-        [What we ALREADY ASKED (STRICTLY DO NOT REPEAT)]: {asked_facts}
-        [RECENTLY ASKED QUESTIONS]: {recent_context}
-        
-        [GLOBAL RULES]
-        1. ASK ONLY FACTUAL QUESTIONS. 
-        2. NEVER ASK about Laws, Acts, Sections, Legal Validity, or User Rights.
-        3. Allowed Categories: Event details, People involved, Time/Dates, Locations/Accounts, Financial/Emotional Impact.
-        
-        Task: 
-        1. Generate ONE clear, polite follow-up question strictly targeting the [TARGET CANONICAL FIELD].
-        2. STRICT RULE: Do NOT ask about anything in [What we ALREADY KNOW].
-        3. STRICT RULE: If 'bank_name' or 'account' is in [What we ALREADY KNOW], do NOT mention it in the question.
-        4. STRICT RULE: Do NOT ask about anything mentioned in [RECENTLY ASKED QUESTIONS].
-        5. Use {lang} language.
-        6. If no specific target is defined, ask: "Is there any other important factual detail you would like to add?"
-        
-        Return ONLY the question text in {lang}.
-        """
+        return {
+            "generated_content": question,
+            "asked_facts": asked_facts
+        }
     
-    response = llm.invoke([HumanMessage(content=prompt)])
-    question = response.content.strip().strip('"')
+    # STRUCTURED INTERVIEW - Ask specific questions based on what's missing
+    # Define the interview structure based on document type
+    question_sequence = get_question_sequence(intent, answered_facts, asked_facts)
     
+    if question_sequence:
+        next_question_data = question_sequence[0]
+        asked_facts.append(next_question_data["field"])
+        
+        question_text = next_question_data["question"]
+        
+        # Translate if needed
+        if lang != "en":
+            prompt = f"""Translate the following question to {lang}, keeping it natural and conversational:
+
+{question_text}
+
+Return ONLY the translated question."""
+            response = llm.invoke([HumanMessage(content=prompt)])
+            question_text = response.content.strip()
+        
+        return {
+            "generated_content": question_text,
+            "asked_facts": asked_facts
+        }
+    
+    # If no more structured questions, move to confirmation
     return {
-        "generated_content": question,
+        "generated_content": "Thank you for providing the information. Let me prepare a summary for your review.",
+        "next_step": "ask_confirmation",
         "asked_facts": asked_facts
     }
+
+
+def get_question_sequence(intent: str, answered_facts: dict, asked_facts: list) -> list:
+    """
+    Returns a prioritized list of questions to ask based on intent and what's already known.
+    Each question is a dict with 'field' and 'question' keys.
+    """
+    
+    # Define comprehensive question templates for different legal scenarios
+    all_questions = {
+        # PERSONAL DETAILS (Always needed)
+        "user_full_name": {
+            "question": "What is your full name as it should appear in the legal document?",
+            "priority": 1
+        },
+        "user_address": {
+            "question": "What is your complete residential address (including street, area, city, state, and PIN code)?",
+            "priority": 1
+        },
+        "user_phone": {
+            "question": "What is your contact phone number?",
+            "priority": 1
+        },
+        "user_email": {
+            "question": "What is your email address? (Optional, but recommended)",
+            "priority": 2
+        },
+        
+        # INCIDENT DETAILS (Core information)
+        "incident_date": {
+            "question": "When exactly did this incident occur? Please provide the date (and time if relevant).",
+            "priority": 1
+        },
+        "incident_location": {
+            "question": "Where did this incident take place? Please provide the complete address or location details.",
+            "priority": 1
+        },
+        "incident_description": {
+            "question": "Please describe what happened in detail. Include the sequence of events, what was said or done, and any relevant context.",
+            "priority": 1
+        },
+        
+        # PARTIES INVOLVED
+        "counterparty_name": {
+            "question": "Who is the other party involved in this matter? (Name of person, company, or organization)",
+            "priority": 1
+        },
+        "counterparty_address": {
+            "question": "What is the address of the other party? (If known)",
+            "priority": 2
+        },
+        "counterparty_role": {
+            "question": "What is the relationship or role of the other party? (e.g., landlord, employer, seller, service provider)",
+            "priority": 2
+        },
+        
+        # WITNESSES
+        "witness_details": {
+            "question": "Were there any witnesses to this incident? If yes, please provide their names and contact information.",
+            "priority": 2
+        },
+        
+        # FINANCIAL DETAILS
+        "financial_loss_value": {
+            "question": "What is the monetary value involved or lost in this matter? Please specify the exact amount in rupees.",
+            "priority": 1
+        },
+        "payment_details": {
+            "question": "How was the payment made? (e.g., cash, cheque, online transfer, UPI). Please provide transaction details if available.",
+            "priority": 2
+        },
+        
+        # EVIDENCE
+        "evidence_available": {
+            "question": "What evidence do you have to support your case? (e.g., receipts, contracts, emails, messages, photos, videos, documents)",
+            "priority": 1
+        },
+        
+        # PRIOR ACTIONS
+        "prior_complaints": {
+            "question": "Have you already filed any complaint or taken any action regarding this matter? If yes, please provide details.",
+            "priority": 2
+        },
+        
+        # HARM/IMPACT
+        "harm_description": {
+            "question": "How has this incident affected you? Please describe any physical, emotional, or financial impact.",
+            "priority": 2
+        },
+        
+        # SPECIFIC TO POLICE COMPLAINTS
+        "stolen_items": {
+            "question": "What items were stolen or lost? Please list them with approximate values.",
+            "priority": 1,
+            "applicable_for": ["theft", "robbery", "burglary", "police"]
+        },
+        "fir_station": {
+            "question": "Which police station has jurisdiction over the area where the incident occurred?",
+            "priority": 1,
+            "applicable_for": ["theft", "robbery", "assault", "police"]
+        },
+        
+        # SPECIFIC TO CONSUMER COMPLAINTS
+        "product_name": {
+            "question": "What is the name and model of the product or service in question?",
+            "priority": 1,
+            "applicable_for": ["consumer", "product", "service"]
+        },
+        "purchase_date": {
+            "question": "When did you purchase this product or avail this service?",
+            "priority": 1,
+            "applicable_for": ["consumer", "product", "service"]
+        },
+        "defect_description": {
+            "question": "What is the defect or problem with the product/service?",
+            "priority": 1,
+            "applicable_for": ["consumer", "product", "service", "defective"]
+        },
+        
+        # SPECIFIC TO RTI
+        "rti_department": {
+            "question": "Which government department or public authority are you seeking information from?",
+            "priority": 1,
+            "applicable_for": ["rti", "information", "government"]
+        },
+        "information_sought": {
+            "question": "What specific information are you requesting under the RTI Act?",
+            "priority": 1,
+            "applicable_for": ["rti", "information"]
+        },
+        
+        # SPECIFIC TO LANDLORD/TENANT
+        "property_address": {
+            "question": "What is the complete address of the rental property?",
+            "priority": 1,
+            "applicable_for": ["rent", "landlord", "tenant", "eviction"]
+        },
+        "rent_amount": {
+            "question": "What is the monthly rent amount?",
+            "priority": 1,
+            "applicable_for": ["rent", "landlord", "tenant"]
+        },
+        "deposit_amount": {
+            "question": "What is the security deposit amount?",
+            "priority": 1,
+            "applicable_for": ["rent", "landlord", "tenant", "deposit"]
+        },
+        "lease_start_date": {
+            "question": "When did the rental agreement start?",
+            "priority": 2,
+            "applicable_for": ["rent", "landlord", "tenant"]
+        }
+    }
+    
+    # Filter questions based on intent and what's already answered/asked
+    intent_lower = intent.lower()
+    applicable_questions = []
+    
+    for field, q_data in all_questions.items():
+        # Skip if already answered or asked
+        if field in answered_facts or field in asked_facts:
+            continue
+        
+        # Check if question is applicable for this intent
+        if "applicable_for" in q_data:
+            if not any(keyword in intent_lower for keyword in q_data["applicable_for"]):
+                continue
+        
+        applicable_questions.append({
+            "field": field,
+            "question": q_data["question"],
+            "priority": q_data.get("priority", 3)
+        })
+    
+    # Sort by priority (lower number = higher priority)
+    applicable_questions.sort(key=lambda x: x["priority"])
+    
+    return applicable_questions
+
 
 # Node: Generate Document (Bilingual)
 def generate_document_node(state: LegalState):
