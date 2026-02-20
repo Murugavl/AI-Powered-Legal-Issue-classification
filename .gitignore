@@ -42,6 +42,7 @@ backend-java/.classpath
 backend-java/.project
 backend-java/.settings/
 backend-java/.env
+backend-java/target/
 
 # NLP Service (Python)
 nlp-python/__pycache__/
