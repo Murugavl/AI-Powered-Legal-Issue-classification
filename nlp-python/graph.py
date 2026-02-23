@@ -131,35 +131,51 @@ def analyze_legal_context_node(state: LegalState):
     
     1. **Event Dimension**:
        - Key: `primary_event_overview` (The main thing that happened)
-       - Key: `specific_action` (Specific acts done by parties)
+       - Key: `incident_description` (Detailed description of the event)
     2. **Party Dimension**:
        - Key: `counterparty_name` (The person/entity opposing the user)
+       - Key: `counterparty_address` (Address of the other party)
        - Key: `counterparty_role` (Landlord, Husband, Bank, etc.)
        - Key: `user_role` (Tenant, Wife, Customer, etc.)
-    3. **Time Dimension**:
-       - Key: `event_timestamp` (Date/Time of main event)
-       - Key: `duration_frequency` (How long/often)
-    4. **Place/Context Dimension**:
+       - Key: `witness_details` (Names and contacts of witnesses)
+    3. **Personal Dimension**:
+       - Key: `user_full_name` (Name of the user filing the complaint)
+       - Key: `user_address` (User's complete residential address)
+       - Key: `user_phone` (User's contact number)
+    4. **Time Dimension**:
+       - Key: `incident_date` (Date/Time of main event)
+    5. **Place/Context Dimension**:
        - Key: `incident_location` (Physical or Digital place)
-       - Key: `reference_identifier` (Account Number, ID, Reg Number)
-    5. **Impact Dimension**:
+       - Key: `product_name` (Name/model of product or service)
+       - Key: `defect_description` (Specific defect)
+       - Key: `prior_complaints` (Past actions taken)
+    6. **Impact/Financial Dimension**:
        - Key: `financial_loss_value` (Monetary impact)
+       - Key: `payment_details` (Payment method details)
        - Key: `harm_description` (Non-monetary harm)
-    6. **Evidence Dimension**:
-       - Key: `evidence_available` (Documents like Salary Slips, Offer Letter, Termination Letter, Contracts)
+       - Key: `stolen_items` (Items stolen)
+    7. **Evidence Dimension**:
+       - Key: `evidence_available` (Documents, receipts, contracts)
 
     [CONSISTENCY & REDUNDANCY CHECK]
     - **Normalization**: If the user says "My husband hit me" -> extract 'primary_event_overview': "Physical assault per user". 
-    - **Deduplication**: Compare with [CURRENT FACTS]. If 'event_timestamp' is already known, DO NOT include it in 'required_keys_schema' even if the user rephrases it as 'date of calling'.
-    - **Locking**: If a user previously said "No" or "Unknown" to a dimension, it is locked. Do not put it in schema.
+    - **Deduplication**: Compare with [CURRENT FACTS]. If 'event_timestamp' is already known, DO NOT include it in 'required_keys_schema'.
 
     [TASK]
     Analyze the conversation history.
     
     1. **Identify Intent**: specific factual problem.
     2. **Fact Extraction**: Extract facts using the CANONICAL KEYS above.
-       - Use "NOT_AVAILABLE" for negative answers to lock them.
-    3. **Schema Definition**: Define REQUIRED fields using ONLY the CANONICAL KEYS above.
+       - IMPORTANT: ONLY extract keys where you have ACTUAL DATA explicitly stated by the user.
+       - If the user has NOT mentioned a topic at all, DO NOT put its key in `extracted_critical_facts`. Just skip the key.
+       - NEVER use "Unknown" or "NOT_AVAILABLE". If the answer is unknown because the user hasn't said it yet, simply omit the key entirely from your output.
+       - ONLY output "EXPLICITLY_DENIED" if the user has specifically replied "No", "None", or "I don't know" to a direct question about that exact field. Do NOT use this for things the user just hasn't brought up yet.
+    3. **Schema Definition**: Define `required_keys_schema` as a smart, contextual list of keys logically necessary to draft a useful legal document for this intent.
+       - ALWAYS include: `user_full_name`, `user_address`, `user_phone`, `incident_date`, `incident_description`.
+       - If there is another party involved, include `counterparty_name`.
+       - ONLY include specific keys (like `product_name`, `stolen_items`, `financial_loss_value`, `evidence_available`, etc.) IF they are directly relevant to the specific problem.
+       - DO NOT ask for irrelevant details. For example, do not ask for `stolen_items` in a rental dispute. Do not ask for `defect_description` in an assault case.
+       - Keep it focused and efficient. A typical schema has 6 to 9 highly relevant keys.
     
     [CURRENT FACTS]
     Critical: {json.dumps(current_critical)}
@@ -203,6 +219,7 @@ def analyze_legal_context_node(state: LegalState):
         
         # New extractions
         new_critical = analysis.get("extracted_critical_facts", {})
+        print(f"DEBUG: LLM Raw Critical Extracted: {new_critical}")
         normalized_critical = {}
         for k, v in new_critical.items():
             canonical_key = CANONICAL_ALIASES.get(k, k)
@@ -214,6 +231,7 @@ def analyze_legal_context_node(state: LegalState):
             CANONICAL_ALIASES.get(k, k)
             for k in analysis.get("required_keys_schema", [])
         ]
+        print(f"DEBUG: Required Keys Output from LLM: {required_keys}")
 
         intent = analysis.get("intent", "Unknown")
         
@@ -245,12 +263,17 @@ def analyze_legal_context_node(state: LegalState):
         updated_critical = current_critical.copy()
         
         for k, v in new_critical.items():
-            v = normalize_value(v)
-
-            if v == "NOT_AVAILABLE":
-                answered_facts[k] = "NOT_AVAILABLE"
-                updated_critical[k] = "NOT_AVAILABLE"
+            if v is None:
                 continue
+            
+            str_v = str(v).lower()
+            if any(hallucination in str_v for hallucination in ["none", "null", "not_available", "unknown", "(unknown)", "tbd", "n/a"]):
+                continue
+                
+            if str(v).upper() == "EXPLICITLY_DENIED":
+                v = "EXPLICITLY_DENIED"
+            else:
+                v = normalize_value(v)
             # Check for conflict resolution
             if k in fact_conflicts:
                 # User provided a value for a specifically conflicted field
@@ -298,8 +321,7 @@ def analyze_legal_context_node(state: LegalState):
                 if k not in answered_facts: # Treat optional same as critical for locking
                     answered_facts[k] = v
                     updated_optional[k] = v
-                    # Optional facts don't necessarily count for "critical" readiness but good to track
-
+                    newly_added_facts_count += 1
                     # Optional facts don't necessarily count for "critical" readiness but good to track
 
         # --- MODE 2 EXPRESS TRIGGER (STRICT) ---
@@ -337,20 +359,34 @@ def analyze_legal_context_node(state: LegalState):
         missing_critical_fields = []
 
         for key in required_keys:
-            if key in answered_facts:
-                continue  # already answered or locked
+            val = answered_facts.get(key)
+            if val is not None and str(val).strip() != "" and str(val).lower() not in ["none", "null", "not_available", "unknown"]:
+                present_critical_count += 1
+                continue  # already answered with valid content
+            elif val == "EXPLICITLY_DENIED":
+                # Explicitly locked by user
+                present_critical_count += 1
+                continue
+            
             missing_critical_fields.append(key)
 
                 
         # --- READINESS CALCULATION ---
-        total_required = len(required_keys)
+        # Base readiness dynamically on the required_keys_schema the LLM decided on
+        total_required = present_critical_count + len(missing_critical_fields)
+        
         readiness_score = 0
         if total_required > 0:
             readiness_score = int((present_critical_count / total_required) * 100)
             
         # Fallback for generic intents
-        if readiness_score == 0 and len(answered_facts) > 3:
+        if total_required == 0 and len(answered_facts) > 3:
             readiness_score = 50
+            
+        # Guard 0: Prevent backwards movement of score if LLM adds many missing fields suddenly
+        previous_score = state.get("readiness_score", 0)
+        if readiness_score < previous_score:
+             readiness_score = previous_score
             
         # Guard 1: Anti-Inflation
         previous_score = state.get("readiness_score", 0)
@@ -546,24 +582,44 @@ Return ONLY the translated message."""
         }
     
     # STRUCTURED INTERVIEW - Ask specific questions based on what's missing
-    # Define the interview structure based on document type
-    question_sequence = get_question_sequence(intent, answered_facts, asked_facts)
+    missing_fields = state.get("missing_fields", [])
     
-    if question_sequence:
-        next_question_data = question_sequence[0]
-        asked_facts.append(next_question_data["field"])
+    if missing_fields:
+        # Choose the first missing field that hasn't been asked yet in the recent turn
+        # If all missing fields have been asked, we just pick the first one again to clarify
+        target_field = missing_fields[0]
+        for field in missing_fields:
+            if field not in asked_facts:
+                target_field = field
+                break
+                
+        asked_facts.append(target_field)
         
-        question_text = next_question_data["question"]
+        # Format recent conversation history for context
+        recent_msgs = messages[-4:] if len(messages) >= 4 else messages
+        history_text = "\n".join([f"{'User' if m.type == 'human' else 'Assistant'}: {m.content}" for m in recent_msgs])
         
-        # Translate if needed
-        if lang != "en":
-            prompt = f"""Translate the following question to {lang}, keeping it natural and conversational:
-
-{question_text}
-
-Return ONLY the translated question."""
-            response = llm.invoke([HumanMessage(content=prompt)])
-            question_text = response.content.strip()
+        # Ask LLM to generate the next conversational question
+        prompt = f"""
+        You are 'Satta Vizhi', an expert empathetic Legal AI Assistant.
+        
+        [CONTEXT]
+        Legal Issue / Intent: {intent}
+        Current Missing Information we need: '{target_field}'
+        Language to respond in: {lang}
+        
+        [RECENT CONVERSATION]
+        {history_text}
+        
+        [TASK]
+        Generate the NEXT single follow-up question to ask the user to figure out '{target_field}'.
+        Keep it natural, polite, engaging and conversational. 
+        DO NOT explain yourself, DO NOT use markdown, and DO NOT wrap it in quotes.
+        Respond ONLY with the exact question text in {lang}.
+        """
+        
+        response = llm.invoke([SystemMessage(content="You are a conversational legal question generator."), HumanMessage(content=prompt)])
+        question_text = response.content.strip()
         
         return {
             "generated_content": question_text,
@@ -775,6 +831,13 @@ def generate_document_node(state: LegalState):
         "is_bilingual": True
     }
     
+    # Generate suggestions
+    suggestions_prompt = f"Based on the legal intent '{intent}' and the provided facts, provide 3 to 4 concise, practical next steps or suggestions on what the user should do next (e.g., where to file, deadlines, what to keep safe). Output ONLY the suggestions in a bulleted list.\n\nFacts: {json.dumps(facts)}"
+    if lang != "en":
+        suggestions_prompt += f"\nPlease translate the suggestions to {lang}."
+    suggestions_response = llm.invoke([HumanMessage(content=suggestions_prompt)])
+    suggestions = suggestions_response.content.strip()
+    
     # For backward compatibility, also set generated_content
     # This will be the user language version for display
     generated_content = f"""# Legal Document - {bilingual_result['document_type'].replace('_', ' ').title()}
@@ -793,6 +856,11 @@ def generate_document_node(state: LegalState):
 ## English Version (For Official Submission)
 
 {bilingual_result['english_content']}
+
+---
+
+## Suggestions / Next Steps
+{suggestions}
 
 ---
 
