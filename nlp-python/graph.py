@@ -169,13 +169,18 @@ def analyze_legal_context_node(state: LegalState):
        - IMPORTANT: ONLY extract keys where you have ACTUAL DATA explicitly stated by the user.
        - If the user has NOT mentioned a topic at all, DO NOT put its key in `extracted_critical_facts`. Just skip the key.
        - NEVER use "Unknown" or "NOT_AVAILABLE". If the answer is unknown because the user hasn't said it yet, simply omit the key entirely from your output.
-       - ONLY output "EXPLICITLY_DENIED" if the user has specifically replied "No", "None", or "I don't know" to a direct question about that exact field. Do NOT use this for things the user just hasn't brought up yet.
+       - NEVER output "EXPLICITLY_DENIED" on your own. You may ONLY output "EXPLICITLY_DENIED" if specifically instructed to do so by the [RECENT QUESTION CONTEXT] section below.
     3. **Schema Definition**: Define `required_keys_schema` as a smart, contextual list of keys logically necessary to draft a useful legal document for this intent.
        - ALWAYS include: `user_full_name`, `user_address`, `user_phone`, `incident_date`, `incident_description`.
        - If there is another party involved, include `counterparty_name`.
        - ONLY include specific keys (like `product_name`, `stolen_items`, `financial_loss_value`, `evidence_available`, etc.) IF they are directly relevant to the specific problem.
-       - DO NOT ask for irrelevant details. For example, do not ask for `stolen_items` in a rental dispute. Do not ask for `defect_description` in an assault case.
-       - Keep it focused and efficient. A typical schema has 6 to 9 highly relevant keys.
+        - DO NOT ask for irrelevant details. For example, do not ask for `stolen_items` in a rental dispute. Do not ask for `defect_description` in an assault case.
+        - Keep it focused and efficient. A typical schema has 6 to 9 highly relevant keys.
+        
+    {f'''[RECENT QUESTION CONTEXT]
+    The system's most recent question was trying to figure out the key: `{list(asked_facts)[-1]}`.
+    If the user's latest response is a generic "I don't know", "No", "Not sure", or "None" without extra context, they are explicitly denying knowledge for that specific key.
+    YOU MUST ADD the key `{list(asked_facts)[-1]}` to `extracted_critical_facts` and set its value to exactly "EXPLICITLY_DENIED". DO NOT SKIP IT. This is a critical system requirement.''' if asked_facts else ''}
     
     [CURRENT FACTS]
     Critical: {json.dumps(current_critical)}
@@ -204,6 +209,10 @@ def analyze_legal_context_node(state: LegalState):
         "required_keys_schema": ["CANONICAL_KEY_1", "CANONICAL_KEY_2"]
     }}
     """
+    
+    print("DEBUG PROMPT RECENT CONTEXT:", f"Asked facts: {asked_facts}")
+    if asked_facts:
+        print("DEBUG RECENT_QUESTION_CONTEXT activated line:", f"The system's most recent question was trying to figure out the key: `{list(asked_facts)[-1]}`.")
     
     response = llm.invoke([
         SystemMessage(content="You are a legal reasoning engine. Output valid JSON only."),
@@ -612,9 +621,12 @@ Return ONLY the translated message."""
         {history_text}
         
         [TASK]
-        Generate the NEXT single follow-up question to ask the user to figure out '{target_field}'.
-        Keep it natural, polite, engaging and conversational. 
-        DO NOT explain yourself, DO NOT use markdown, and DO NOT wrap it in quotes.
+        1. Generate the NEXT single follow-up question to ask the user to figure out '{target_field}'.
+        2. IF the user previously said they "do not know" or "don't have" this information, DO NOT badger them. Just ask for the NEXT reasonably important thing from the context.
+        3. Do NOT ask for information the user has already explicitly denied knowing or explicitly refused to provide.
+        4. Keep it natural, polite, engaging and conversational. 
+        5. DO NOT explain yourself, DO NOT use markdown, and DO NOT wrap it in quotes.
+        
         Respond ONLY with the exact question text in {lang}.
         """
         
@@ -832,9 +844,13 @@ def generate_document_node(state: LegalState):
     }
     
     # Generate suggestions
-    suggestions_prompt = f"Based on the legal intent '{intent}' and the provided facts, provide 3 to 4 concise, practical next steps or suggestions on what the user should do next (e.g., where to file, deadlines, what to keep safe). Output ONLY the suggestions in a bulleted list.\n\nFacts: {json.dumps(facts)}"
+    suggestions_prompt = f"""Based on the legal intent '{intent}' and the provided facts:
+    1. Clearly suggest what legal cases or actions the user can file for.
+    2. Provide a list of the pros and cons for each suggested legal action.
+    Make it concise, easy to read, and bulleted.
+    Facts: {json.dumps(facts)}"""
     if lang != "en":
-        suggestions_prompt += f"\nPlease translate the suggestions to {lang}."
+        suggestions_prompt += f"\nPlease translate the suggestions output to {lang}."
     suggestions_response = llm.invoke([HumanMessage(content=suggestions_prompt)])
     suggestions = suggestions_response.content.strip()
     
@@ -956,7 +972,8 @@ def process_message(thread_id: str, user_input: str):
             "entities": facts,
             "intent": intent,
             "readiness_score": score,
-            "is_document": next_step == "generate_document"
+            "is_document": next_step == "generate_document",
+            "is_confirmation": next_step == "ask_confirmation"
         }
 
     # 2. INVOKE GRAPH
@@ -981,5 +998,6 @@ def process_message(thread_id: str, user_input: str):
         "entities": facts,
         "intent": intent,
         "readiness_score": score,
-        "is_document": next_step == "generate_document"
+        "is_document": next_step == "generate_document",
+        "is_confirmation": next_step == "ask_confirmation"
     }

@@ -221,6 +221,14 @@ public class SessionService {
             response.setComplete(false);
         }
 
+        // Determine confirmation phase
+        Boolean isConf = (Boolean) agentResponse.get("is_confirmation");
+        if (Boolean.TRUE.equals(isConf)) {
+            response.setConfirmation(true);
+        } else {
+            response.setConfirmation(false);
+        }
+
         return response;
     }
 }

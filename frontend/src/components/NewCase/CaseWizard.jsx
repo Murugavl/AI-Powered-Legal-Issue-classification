@@ -22,6 +22,7 @@ function CaseWizard() {
     const [extractedData, setExtractedData] = useState(null); // Full session data for final step
     const [documentContent, setDocumentContent] = useState('');
     const [showPreview, setShowPreview] = useState(false);
+    const [showSummaryModal, setShowSummaryModal] = useState(false);
 
     // Privacy & Evidence
     const [hasConsented, setHasConsented] = useState(false);
@@ -106,18 +107,20 @@ function CaseWizard() {
             setEntities(data.extractedEntities || {});
             setExtractedData(data); // Store for final submission
 
-            if (data.nextQuestion) {
-                setMessages(prev => [...prev, {
-                    id: Date.now() + 1,
-                    sender: 'system',
-                    text: data.nextQuestion
-                }]);
+            if (data.confirmation || data.isConfirmation) {
+                setShowSummaryModal(true);
             } else if (data.complete) {
                 setIsComplete(true);
                 setMessages(prev => [...prev, {
                     id: Date.now() + 1,
                     sender: 'system',
-                    text: "I have gathered all the necessary information. Your document is ready to be generated."
+                    text: data.nextQuestion || "I have gathered all the necessary information. Your document is ready to be generated."
+                }]);
+            } else if (data.nextQuestion) {
+                setMessages(prev => [...prev, {
+                    id: Date.now() + 1,
+                    sender: 'system',
+                    text: data.nextQuestion
                 }]);
             }
 
@@ -175,6 +178,38 @@ function CaseWizard() {
         }
     };
 
+    const handleConfirmSummary = async () => {
+        setShowSummaryModal(false);
+        const userMsg = { id: Date.now(), sender: 'user', text: 'CONFIRM' };
+        setMessages(prev => [...prev, userMsg]);
+        setLoading(true);
+
+        try {
+            const response = await sessionAPI.answer(sessionId, "CONFIRM");
+            const data = response.data;
+            setEntities(data.extractedEntities || {});
+            setExtractedData(data); // Store for final submission
+
+            if (data.complete) {
+                setIsComplete(true);
+                setMessages(prev => [...prev, {
+                    id: Date.now() + 1,
+                    sender: 'system',
+                    text: data.nextQuestion || "I have gathered all the necessary information. Your document is ready to be generated."
+                }]);
+            }
+        } catch (err) {
+            console.error(err);
+            setMessages(prev => [...prev, {
+                id: Date.now() + 1,
+                sender: 'system',
+                text: "I'm sorry, an error occurred during confirmation."
+            }]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     // Voice Input Handler
     const handleVoiceInput = async (audioFile) => {
         setLoading(true);
@@ -214,7 +249,16 @@ function CaseWizard() {
             setEntities(data.extractedEntities || {});
             setExtractedData(data);
 
-            if (data.nextQuestion) {
+            if (data.confirmation || data.isConfirmation) {
+                setShowSummaryModal(true);
+            } else if (data.complete) {
+                setIsComplete(true);
+                setMessages(prev => [...prev, {
+                    id: Date.now() + 1,
+                    sender: 'system',
+                    text: data.nextQuestion || "I have gathered all the necessary information. Your document is ready to be generated."
+                }]);
+            } else if (data.nextQuestion) {
                 setTimeout(() => {
                     setMessages(prev => [...prev, {
                         id: Date.now() + 1,
@@ -222,13 +266,6 @@ function CaseWizard() {
                         text: data.nextQuestion
                     }]);
                 }, 500);
-            } else if (data.complete) {
-                setIsComplete(true);
-                setMessages(prev => [...prev, {
-                    id: Date.now() + 1,
-                    sender: 'system',
-                    text: "I have gathered all the necessary information. Your document is ready to be generated."
-                }]);
             }
 
         } catch (err) {
@@ -297,7 +334,9 @@ function CaseWizard() {
                     <div className="entities-panel">
                         <div className="entities-title">Discovered Facts</div>
                         <div className="tag-cloud">
-                            {Object.entries(entities).map(([key, value]) => (
+                            {Object.entries(entities)
+                                .filter(([_, value]) => value !== 'EXPLICITLY_DENIED')
+                                .map(([key, value]) => (
                                 <div key={key} className="data-tag">
                                     <span>{key.replace(/_/g, ' ')}:</span>
                                     <strong>{value}</strong>
@@ -387,6 +426,33 @@ function CaseWizard() {
                     </div>
                 )
             }
+
+            {showSummaryModal && (
+                <div className="modal-overlay" style={{
+                    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+                    backgroundColor: 'rgba(15, 23, 42, 0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
+                }}>
+                    <div className="modal-content" style={{
+                        background: 'var(--card-bg)', padding: '2rem', borderRadius: '12px', minWidth: '400px', maxWidth: '600px',
+                        border: '1px solid var(--glass-border)', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                    }}>
+                        <h2 style={{ marginBottom: '1rem', color: 'var(--text-primary)' }}>Information Summary</h2>
+                        <ul style={{ listStyle: 'none', padding: 0, marginBottom: '2rem' }}>
+                            {Object.entries(entities)
+                                .filter(([_, value]) => value !== 'EXPLICITLY_DENIED')
+                                .map(([key, value]) => (
+                                <li key={key} style={{ padding: '0.8rem', background: 'var(--app-bg)', marginBottom: '0.5rem', borderRadius: '6px' }}>
+                                    <strong style={{ textTransform: 'capitalize', color: 'var(--primary-color)' }}>{key.replace(/_/g, ' ')}:</strong> {value}
+                                </li>
+                            ))}
+                        </ul>
+                        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                            <button className="btn btn-secondary" onClick={() => setShowSummaryModal(false)}>Cancel & Keep Editing</button>
+                            <button className="btn btn-primary" onClick={handleConfirmSummary}>Yes, I Confirm</button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 }
