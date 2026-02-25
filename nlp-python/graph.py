@@ -174,9 +174,8 @@ def analyze_legal_context_node(state: LegalState):
        - ALWAYS include: `user_full_name`, `user_address`, `user_phone`, `incident_date`, `incident_description`.
        - If there is another party involved, include `counterparty_name`.
        - ONLY include specific keys (like `product_name`, `stolen_items`, `financial_loss_value`, `evidence_available`, etc.) IF they are directly relevant to the specific problem.
-        - DO NOT ask for irrelevant details. For example, do not ask for `stolen_items` in a rental dispute. Do not ask for `defect_description` in an assault case.
-        - Keep it focused and efficient. A typical schema has 6 to 9 highly relevant keys.
-        
+       - DO NOT ask for irrelevant details. For example, do not ask for `stolen_items` in a rental dispute. Do not ask for `defect_description` in an assault case.
+       - STRICT LIMIT: You MUST output a MAXIMUM of 12 keys total in `required_keys_schema`. Ensure you include enough specific keys to build a robust legal case without badgering the user with unnecessary details.
     {f'''[RECENT QUESTION CONTEXT]
     The system's most recent question was trying to figure out the key: `{list(asked_facts)[-1]}`.
     If the user's latest response is a generic "I don't know", "No", "Not sure", or "None" without extra context, they are explicitly denying knowledge for that specific key.
@@ -191,12 +190,13 @@ def analyze_legal_context_node(state: LegalState):
     
     [SAFETY CHECK (CRITICAL)]
     Analyze if the user input involves:
-    - Immediate danger to life
-    - Violence / Physical Assault (ongoing or planned)
-    - Serious criminal activity (not just civil disputes)
-    - Emergency situations
+    - Immediate danger to life (RIGHT NOW)
+    - Violence / Physical Assault (ongoing or planned RIGHT NOW)
+    - Serious criminal activity (ongoing RIGHT NOW, not past)
     
-    If ANY of these are detected, set "safety_status": "UNSAFE" and "safety_reason": "Reason...".
+    OVERRIDE RULE: You MUST classify the input as "SAFE" if the user is asking how to file a complaint, requesting legal help, or talking about a past event. ANY vehicle accident, property damage, or physical injury that ALREADY HAPPENED (e.g. they survived and are asking for advice) is STRICTLY SAFE. Do NOT flag these as UNSAFE. Only flag active, ongoing, immediate 911-level threats.
+
+    If ANY ongoing immediate threats are detected, set "safety_status": "UNSAFE" and "safety_reason": "Reason...".
     Otherwise, set "safety_status": "SAFE".
 
     [OUTPUT FORMAT]
@@ -295,9 +295,16 @@ def analyze_legal_context_node(state: LegalState):
             elif k in answered_facts:
                 existing_val = str(answered_facts[k]).strip()
                 new_val = str(v).strip()
-                
+
+                if existing_val == "EXPLICITLY_DENIED" and new_val != "EXPLICITLY_DENIED":
+                    # User clarified a previously denied/unknown fact. Overwrite it.
+                    answered_facts[k] = new_val
+                    updated_critical[k] = new_val
+                elif existing_val != "EXPLICITLY_DENIED" and new_val == "EXPLICITLY_DENIED":
+                    # LLM wrongly flagged as denied when we already have a valid value. Ignore.
+                    pass
                 # 1. Exact Match: No Op
-                if existing_val.lower() == new_val.lower():
+                elif existing_val.lower() == new_val.lower():
                     pass
                 
                 # Global Constraint: DO NOT MODIFY numeric values
@@ -471,17 +478,26 @@ def analyze_legal_context_node(state: LegalState):
                 next_step = "ask_question"
                 last_rejection = current_turn_count
                 
-            # Explicit Approval -> Generate
+            # Explicit Approval -> Generate Options
             # STRICT KEYWORD: "CONFIRM"
             elif "CONFIRM" in last_msg:
-                next_step = "generate_document"
-                new_stage = "completed"
+                next_step = "ask_action_choice"
+                new_stage = "action_choice"
                 
             # Anything else -> Repeat Confirmation Question
             else:
                 next_step = "ask_confirmation" 
                 
-        else:
+        elif current_stage == "action_choice":
+            last_msg = messages[-1].content.strip()
+            if last_msg.startswith("ACTION:"):
+                # User selected an action
+                intent = last_msg.replace("ACTION:", "").strip()
+                next_step = "generate_document"
+                new_stage = "completed"
+            else:
+                next_step = "ask_action_choice"
+                new_stage = "action_choice"
             # Investigation stage
             # If conflicts exist, we MUST stay in investigation/questioning
             if len(fact_conflicts) > 0:
@@ -590,6 +606,34 @@ Return ONLY the translated message."""
             "asked_facts": asked_facts
         }
     
+    # Action Choice Generation
+    if next_step == "ask_action_choice":
+        facts = state.get("legal_facts", {})
+        suggestions_prompt = f"""Based on the legal intent '{intent}' and the provided facts:
+        1. Specifically suggest 2 to 4 distinct legal cases or actions the user can file for.
+        2. Provide a short list of pros and cons for each.
+        Format the output STRICTLY as a JSON array of objects, with NO markdown formatting:
+        [
+          {{"title": "Action Name", "pros": ["Pro 1"], "cons": ["Con 1"]}}
+        ]
+        Facts: {json.dumps(facts)}"""
+        if lang != "en":
+            suggestions_prompt += f"\nPlease translate the 'title', 'pros', and 'cons' strings to {lang}, but MUST keep the JSON array structure and keys 'title', 'pros', 'cons' exactly in English."
+            
+        response = llm.invoke([SystemMessage(content="Output valid JSON array only."), HumanMessage(content=suggestions_prompt)])
+        content = response.content.strip()
+        import re
+        match = re.search(r'\[.*\]', content, re.DOTALL)
+        if match:
+            content = match.group(0)
+        else:
+            content = content.replace("```json", "").replace("```", "").strip()
+            
+        return {
+            "generated_content": f"ACTION_CHOICES:{content}",
+            "asked_facts": asked_facts
+        }
+    
     # STRUCTURED INTERVIEW - Ask specific questions based on what's missing
     missing_fields = state.get("missing_fields", [])
     
@@ -621,11 +665,10 @@ Return ONLY the translated message."""
         {history_text}
         
         [TASK]
-        1. Generate the NEXT single follow-up question to ask the user to figure out '{target_field}'.
-        2. IF the user previously said they "do not know" or "don't have" this information, DO NOT badger them. Just ask for the NEXT reasonably important thing from the context.
-        3. Do NOT ask for information the user has already explicitly denied knowing or explicitly refused to provide.
-        4. Keep it natural, polite, engaging and conversational. 
-        5. DO NOT explain yourself, DO NOT use markdown, and DO NOT wrap it in quotes.
+        1. Formulate exactly ONE natural, conversational follow-up question to ask the user for the specific Missing Information field: '{target_field}'.
+        2. You MUST ONLY ask for information logically related to '{target_field}'. DO NOT invent new things to ask about (e.g. do not ask for date of birth, identification numbers, etc., unless that is the exact target field).
+        3. Keep the question polite, empathetic, and strictly focused on getting '{target_field}'.
+        4. DO NOT explain yourself, DO NOT use markdown, and DO NOT wrap it in quotes.
         
         Respond ONLY with the exact question text in {lang}.
         """
@@ -843,14 +886,13 @@ def generate_document_node(state: LegalState):
         "is_bilingual": True
     }
     
-    # Generate suggestions
+    # Generate final suggestions (maybe simpler since they already chose, but let's keep it minimal)
     suggestions_prompt = f"""Based on the legal intent '{intent}' and the provided facts:
-    1. Clearly suggest what legal cases or actions the user can file for.
-    2. Provide a list of the pros and cons for each suggested legal action.
+    List 3 concrete next steps to proceed with this selected action.
     Make it concise, easy to read, and bulleted.
     Facts: {json.dumps(facts)}"""
     if lang != "en":
-        suggestions_prompt += f"\nPlease translate the suggestions output to {lang}."
+        suggestions_prompt += f"\nPlease translate the output to {lang}."
     suggestions_response = llm.invoke([HumanMessage(content=suggestions_prompt)])
     suggestions = suggestions_response.content.strip()
     
@@ -907,10 +949,11 @@ workflow.add_conditional_edges(
     check_next_step,
     {
         "ask_question": "generate_question",
-        "ask_confirmation": "generate_question", # Re-use generic question node but with different prompt logic
-        "refusal": "generate_question", # Handle safety refusal in question node
+        "ask_confirmation": "generate_question", 
+        "ask_action_choice": "generate_question",
+        "refusal": "generate_question", 
         "generate_document": "generate_document",
-        "completed": "generate_document" # Safety edge if stage is completed
+        "completed": "generate_document" 
     }
 )
 
@@ -973,7 +1016,8 @@ def process_message(thread_id: str, user_input: str):
             "intent": intent,
             "readiness_score": score,
             "is_document": next_step == "generate_document",
-            "is_confirmation": next_step == "ask_confirmation"
+            "is_confirmation": next_step == "ask_confirmation",
+            "is_action_choice": next_step == "ask_action_choice"
         }
 
     # 2. INVOKE GRAPH
@@ -999,5 +1043,6 @@ def process_message(thread_id: str, user_input: str):
         "intent": intent,
         "readiness_score": score,
         "is_document": next_step == "generate_document",
-        "is_confirmation": next_step == "ask_confirmation"
+        "is_confirmation": next_step == "ask_confirmation",
+        "is_action_choice": next_step == "ask_action_choice"
     }

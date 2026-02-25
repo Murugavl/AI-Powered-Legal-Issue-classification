@@ -8,6 +8,7 @@ import com.legal.document.entity.User;
 import com.legal.document.repository.CaseEntityRepository;
 import com.legal.document.repository.LegalCaseRepository;
 import com.legal.document.repository.UserRepository;
+import com.legal.document.repository.GeneratedDocumentRepository;
 import com.legal.document.util.ReferenceNumberGenerator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,9 @@ public class CaseService {
 
     @Autowired
     private UserRepository userRepository;
+
+    @Autowired
+    private GeneratedDocumentRepository generatedDocumentRepository;
 
     @Autowired
     private ReferenceNumberGenerator referenceNumberGenerator;
@@ -100,6 +104,28 @@ public class CaseService {
 
         entity.setIsConfirmed(true);
         caseEntityRepository.save(entity);
+    }
+
+    @Transactional
+    public void deleteCase(Long caseId, String phoneNumber) {
+        LegalCase legalCase = legalCaseRepository.findById(caseId)
+                .orElseThrow(() -> new RuntimeException("Case not found"));
+
+        if (!legalCase.getUser().getPhoneNumber().equals(phoneNumber)) {
+            throw new RuntimeException("Unauthorized access");
+        }
+
+        // Delete associated GeneratedDocuments if any
+        generatedDocumentRepository.deleteAll(generatedDocumentRepository.findByLegalCase_CaseId(caseId));
+        generatedDocumentRepository.flush();
+
+        // Delete associated entities first (due to FK constraints if not cascading)
+        caseEntityRepository.deleteAll(caseEntityRepository.findByLegalCase(legalCase));
+        caseEntityRepository.flush();
+
+        // Delete the case itself
+        legalCaseRepository.delete(legalCase);
+        legalCaseRepository.flush();
     }
 
     private CaseResponse buildCaseResponse(LegalCase legalCase) {

@@ -57,9 +57,9 @@ export const authAPI = {
 export const caseAPI = {
   create: (data) => api.post('/cases/create', data),
   getMyCases: () => api.get('/cases/my-cases'),
-  getCaseById: (id) => api.get(`/cases/${id}`),
-  confirmEntity: (caseId, fieldName) =>
-    api.post(`/cases/${caseId}/confirm-entity`, { fieldName }),
+  getById: (id) => api.get(`/cases/${id}`),
+  confirmEntity: (id, payload) => api.post(`/cases/${id}/confirm-entity`, payload),
+  deleteCase: (id) => api.delete(`/cases/${id}`),
 };
 
 // Session API (New)

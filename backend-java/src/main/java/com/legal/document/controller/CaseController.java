@@ -32,7 +32,7 @@ public class CaseController {
     }
 
     @GetMapping("/{caseId}")
-    public ResponseEntity<CaseResponse> getCaseById(@PathVariable Long caseId) {
+    public ResponseEntity<CaseResponse> getCaseById(@PathVariable("caseId") Long caseId) {
         try {
             String phoneNumber = getCurrentUserPhoneNumber();
             CaseResponse response = caseService.getCaseById(caseId, phoneNumber);
@@ -55,7 +55,7 @@ public class CaseController {
 
     @PostMapping("/{caseId}/confirm-entity")
     public ResponseEntity<Void> confirmEntity(
-            @PathVariable Long caseId,
+            @PathVariable("caseId") Long caseId,
             @RequestBody Map<String, String> payload) {
         try {
             String phoneNumber = getCurrentUserPhoneNumber();
@@ -64,6 +64,18 @@ public class CaseController {
             return ResponseEntity.ok().build();
         } catch (RuntimeException e) {
             return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @DeleteMapping("/{caseId}")
+    public ResponseEntity<?> deleteCase(@PathVariable("caseId") Long caseId) {
+        try {
+            String phoneNumber = getCurrentUserPhoneNumber();
+            caseService.deleteCase(caseId, phoneNumber);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().body("Failed to delete case: " + e.getMessage());
         }
     }
 

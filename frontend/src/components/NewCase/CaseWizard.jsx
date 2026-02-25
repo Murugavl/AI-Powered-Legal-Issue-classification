@@ -23,6 +23,8 @@ function CaseWizard() {
     const [documentContent, setDocumentContent] = useState('');
     const [showPreview, setShowPreview] = useState(false);
     const [showSummaryModal, setShowSummaryModal] = useState(false);
+    const [actionChoices, setActionChoices] = useState(null);
+    const [showActionModal, setShowActionModal] = useState(false);
 
     // Privacy & Evidence
     const [hasConsented, setHasConsented] = useState(false);
@@ -107,7 +109,22 @@ function CaseWizard() {
             setEntities(data.extractedEntities || {});
             setExtractedData(data); // Store for final submission
 
-            if (data.confirmation || data.isConfirmation) {
+            if (data.actionChoice || data.isActionChoice) {
+                const jsonStr = data.nextQuestion.replace("ACTION_CHOICES:", "").trim();
+                try {
+                    const choices = JSON.parse(jsonStr);
+                    setActionChoices(choices);
+                    setShowActionModal(true);
+                    setMessages(prev => [...prev, {
+                        id: Date.now() + 1,
+                        sender: 'system',
+                        text: "Please select the legal action you would like to pursue from the available options."
+                    }]);
+                } catch (e) {
+                    console.error("Failed to parse action choices", e, jsonStr);
+                    handleConfirmAction("General Legal Consultation");
+                }
+            } else if (data.confirmation || data.isConfirmation) {
                 setShowSummaryModal(true);
             } else if (data.complete) {
                 setIsComplete(true);
@@ -190,7 +207,22 @@ function CaseWizard() {
             setEntities(data.extractedEntities || {});
             setExtractedData(data); // Store for final submission
 
-            if (data.complete) {
+            if (data.actionChoice || data.isActionChoice) {
+                const jsonStr = data.nextQuestion.replace("ACTION_CHOICES:", "").trim();
+                try {
+                    const choices = JSON.parse(jsonStr);
+                    setActionChoices(choices);
+                    setShowActionModal(true);
+                    setMessages(prev => [...prev, {
+                        id: Date.now() + 1,
+                        sender: 'system',
+                        text: "Please select the legal action you would like to pursue from the available options."
+                    }]);
+                } catch (e) {
+                    console.error("Failed to parse action choices", e, jsonStr);
+                    handleConfirmAction("General Legal Consultation");
+                }
+            } else if (data.complete) {
                 setIsComplete(true);
                 setMessages(prev => [...prev, {
                     id: Date.now() + 1,
@@ -204,6 +236,38 @@ function CaseWizard() {
                 id: Date.now() + 1,
                 sender: 'system',
                 text: "I'm sorry, an error occurred during confirmation."
+            }]);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleConfirmAction = async (actionTitle) => {
+        setShowActionModal(false);
+        const userMsg = { id: Date.now(), sender: 'user', text: `Selected: ${actionTitle}` };
+        setMessages(prev => [...prev, userMsg]);
+        setLoading(true);
+
+        try {
+            const response = await sessionAPI.answer(sessionId, `ACTION: ${actionTitle}`);
+            const data = response.data;
+            setEntities(data.extractedEntities || {});
+            setExtractedData(data);
+
+            if (data.complete) {
+                setIsComplete(true);
+                setMessages(prev => [...prev, {
+                    id: Date.now() + 1,
+                    sender: 'system',
+                    text: data.nextQuestion || "Your legal documentation is now ready for generation based on your selected action."
+                }]);
+            }
+        } catch (err) {
+            console.error(err);
+            setMessages(prev => [...prev, {
+                id: Date.now() + 1,
+                sender: 'system',
+                text: "I'm sorry, an error occurred while processing your choice."
             }]);
         } finally {
             setLoading(false);
@@ -249,7 +313,22 @@ function CaseWizard() {
             setEntities(data.extractedEntities || {});
             setExtractedData(data);
 
-            if (data.confirmation || data.isConfirmation) {
+            if (data.actionChoice || data.isActionChoice) {
+                const jsonStr = data.nextQuestion.replace("ACTION_CHOICES:", "").trim();
+                try {
+                    const choices = JSON.parse(jsonStr);
+                    setActionChoices(choices);
+                    setShowActionModal(true);
+                    setMessages(prev => [...prev, {
+                        id: Date.now() + 1,
+                        sender: 'system',
+                        text: "Please select the legal action you would like to pursue from the available options."
+                    }]);
+                } catch (e) {
+                    console.error("Failed to parse action choices", e, jsonStr);
+                    handleConfirmAction("General Legal Consultation");
+                }
+            } else if (data.confirmation || data.isConfirmation) {
                 setShowSummaryModal(true);
             } else if (data.complete) {
                 setIsComplete(true);
@@ -337,11 +416,11 @@ function CaseWizard() {
                             {Object.entries(entities)
                                 .filter(([_, value]) => value !== 'EXPLICITLY_DENIED')
                                 .map(([key, value]) => (
-                                <div key={key} className="data-tag">
-                                    <span>{key.replace(/_/g, ' ')}:</span>
-                                    <strong>{value}</strong>
-                                </div>
-                            ))}
+                                    <div key={key} className="data-tag">
+                                        <span>{key.replace(/_/g, ' ')}:</span>
+                                        <strong>{value}</strong>
+                                    </div>
+                                ))}
                         </div>
 
                         {extractedData && extractedData.suggestedSections && (
@@ -441,14 +520,57 @@ function CaseWizard() {
                             {Object.entries(entities)
                                 .filter(([_, value]) => value !== 'EXPLICITLY_DENIED')
                                 .map(([key, value]) => (
-                                <li key={key} style={{ padding: '0.8rem', background: 'var(--app-bg)', marginBottom: '0.5rem', borderRadius: '6px' }}>
-                                    <strong style={{ textTransform: 'capitalize', color: 'var(--primary-color)' }}>{key.replace(/_/g, ' ')}:</strong> {value}
-                                </li>
-                            ))}
+                                    <li key={key} style={{ padding: '0.8rem', background: 'var(--app-bg)', marginBottom: '0.5rem', borderRadius: '6px' }}>
+                                        <strong style={{ textTransform: 'capitalize', color: 'var(--primary-color)' }}>{key.replace(/_/g, ' ')}:</strong> {value}
+                                    </li>
+                                ))}
                         </ul>
                         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
                             <button className="btn btn-secondary" onClick={() => setShowSummaryModal(false)}>Cancel & Keep Editing</button>
                             <button className="btn btn-primary" onClick={handleConfirmSummary}>Yes, I Confirm</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {showActionModal && actionChoices && (
+                <div className="modal-overlay" style={{
+                    position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+                    backgroundColor: 'rgba(15, 23, 42, 0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
+                }}>
+                    <div className="modal-content" style={{
+                        background: 'var(--card-bg)', padding: '2rem', borderRadius: '12px', minWidth: '400px', maxWidth: '800px', width: '90%', maxHeight: '85vh', overflowY: 'auto',
+                        border: '1px solid var(--glass-border)', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+                    }}>
+                        <h2 style={{ marginBottom: '1.5rem', color: 'var(--text-primary)' }}>Select Legal Action</h2>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', marginBottom: '1.5rem' }}>
+                            {actionChoices.map((choice, idx) => (
+                                <div key={idx} style={{ padding: '1.5rem', background: 'var(--app-bg)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                                    <h3 style={{ color: 'var(--primary-color)', marginBottom: '1rem', fontSize: '1.3rem' }}>{choice.title}</h3>
+
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
+                                        <div>
+                                            <strong style={{ color: '#22c55e', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem', fontSize: '1rem' }}>✅ Possible Advantages</strong>
+                                            <ul style={{ margin: 0, paddingLeft: '0', listStyle: 'none', color: '#e2e8f0', fontSize: '0.9rem' }}>
+                                                {choice.pros && choice.pros.map((p, i) => <li key={i} style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'start', gap: '0.5rem' }}><span style={{ color: '#22c55e', marginTop: '2px' }}>•</span>{p}</li>)}
+                                            </ul>
+                                        </div>
+                                        <div>
+                                            <strong style={{ color: '#ef4444', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.8rem', fontSize: '1rem' }}>⚠️ Potential Risks</strong>
+                                            <ul style={{ margin: 0, paddingLeft: '0', listStyle: 'none', color: '#e2e8f0', fontSize: '0.9rem' }}>
+                                                {choice.cons && choice.cons.map((c, i) => <li key={i} style={{ marginBottom: '0.5rem', display: 'flex', alignItems: 'start', gap: '0.5rem' }}><span style={{ color: '#ef4444', marginTop: '2px' }}>•</span>{c}</li>)}
+                                            </ul>
+                                        </div>
+                                    </div>
+
+                                    <button
+                                        className="btn btn-primary"
+                                        style={{ marginTop: '1.5rem', width: '100%', padding: '1rem', fontWeight: 'bold' }}
+                                        onClick={() => handleConfirmAction(choice.title)}>
+                                        Proceed with {choice.title}
+                                    </button>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 </div>
