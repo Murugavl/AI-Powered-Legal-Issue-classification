@@ -221,6 +221,22 @@ public class SessionService {
             response.setComplete(false);
         }
 
+        // Determine confirmation phase
+        Boolean isConf = (Boolean) agentResponse.get("is_confirmation");
+        if (Boolean.TRUE.equals(isConf)) {
+            response.setConfirmation(true);
+        } else {
+            response.setConfirmation(false);
+        }
+
+        // Determine action choice phase
+        Boolean isChoice = (Boolean) agentResponse.get("is_action_choice");
+        if (Boolean.TRUE.equals(isChoice)) {
+            response.setActionChoice(true);
+        } else {
+            response.setActionChoice(false);
+        }
+
         return response;
     }
 }

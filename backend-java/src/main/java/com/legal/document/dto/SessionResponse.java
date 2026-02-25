@@ -11,6 +11,8 @@ public class SessionResponse {
     private Double confidenceScore;
     private Map<String, String> extractedEntities; // Confirmed facts
     private boolean isComplete;
+    private boolean isConfirmation;
+    private boolean isActionChoice;
     private String suggestedSections;
     private Integer readinessScore;
     private String readinessStatus;
@@ -82,6 +84,22 @@ public class SessionResponse {
 
     public void setComplete(boolean complete) {
         isComplete = complete;
+    }
+
+    public boolean isConfirmation() {
+        return isConfirmation;
+    }
+
+    public void setConfirmation(boolean confirmation) {
+        isConfirmation = confirmation;
+    }
+
+    public boolean isActionChoice() {
+        return isActionChoice;
+    }
+
+    public void setActionChoice(boolean actionChoice) {
+        isActionChoice = actionChoice;
     }
 
     public String getSuggestedSections() {

@@ -37,11 +37,22 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
     }
 
-    @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleGenericException(Exception ex) {
+    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, String>> handleMethodNotSupported(
+            org.springframework.web.HttpRequestMethodNotSupportedException ex) {
         ex.printStackTrace();
         Map<String, String> response = new HashMap<>();
-        response.put("message", "An unexpected error occurred: " + ex.getMessage());
+        response.put("message", "Method Not Allowed: " + ex.getMessage());
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(response);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<Map<String, String>> handleGenericException(Exception ex) {
+        System.err.println("===== UNEXPECTED SYSTEM ERROR =====");
+        ex.printStackTrace();
+        Map<String, String> response = new HashMap<>();
+        response.put("message",
+                "An unexpected error occurred: " + ex.getClass().getSimpleName() + " - " + ex.getMessage());
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
     }
 }
