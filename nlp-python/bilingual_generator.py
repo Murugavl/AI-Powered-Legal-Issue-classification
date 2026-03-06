@@ -113,6 +113,8 @@ def generate_document_in_language(intent: str, facts: dict, language: str) -> st
     • Do NOT include legal conclusions or predictions
     • Do NOT cite specific laws or sections (unless explicitly provided in facts)
     • Do NOT hallucinate names, dates, or amounts
+    • DO NOT include irrelevant details or facts not explicitly stated in the input context.
+    • If a fact is marked as 'EXPLICITLY_DENIED', omit it utterly and do not mention it.
     • Do NOT include lawyer signature or court stamps
     • Do NOT make promises about outcomes
 

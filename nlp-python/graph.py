@@ -131,35 +131,55 @@ def analyze_legal_context_node(state: LegalState):
     
     1. **Event Dimension**:
        - Key: `primary_event_overview` (The main thing that happened)
-       - Key: `specific_action` (Specific acts done by parties)
+       - Key: `incident_description` (Detailed description of the event)
     2. **Party Dimension**:
        - Key: `counterparty_name` (The person/entity opposing the user)
+       - Key: `counterparty_address` (Address of the other party)
        - Key: `counterparty_role` (Landlord, Husband, Bank, etc.)
        - Key: `user_role` (Tenant, Wife, Customer, etc.)
-    3. **Time Dimension**:
-       - Key: `event_timestamp` (Date/Time of main event)
-       - Key: `duration_frequency` (How long/often)
-    4. **Place/Context Dimension**:
+       - Key: `witness_details` (Names and contacts of witnesses)
+    3. **Personal Dimension**:
+       - Key: `user_full_name` (Name of the user filing the complaint)
+       - Key: `user_address` (User's complete residential address)
+       - Key: `user_phone` (User's contact number)
+    4. **Time Dimension**:
+       - Key: `incident_date` (Date/Time of main event)
+    5. **Place/Context Dimension**:
        - Key: `incident_location` (Physical or Digital place)
-       - Key: `reference_identifier` (Account Number, ID, Reg Number)
-    5. **Impact Dimension**:
+       - Key: `product_name` (Name/model of product or service)
+       - Key: `defect_description` (Specific defect)
+       - Key: `prior_complaints` (Past actions taken)
+    6. **Impact/Financial Dimension**:
        - Key: `financial_loss_value` (Monetary impact)
+       - Key: `payment_details` (Payment method details)
        - Key: `harm_description` (Non-monetary harm)
-    6. **Evidence Dimension**:
-       - Key: `evidence_available` (Documents like Salary Slips, Offer Letter, Termination Letter, Contracts)
+       - Key: `stolen_items` (Items stolen)
+    7. **Evidence Dimension**:
+       - Key: `evidence_available` (Documents, receipts, contracts)
 
     [CONSISTENCY & REDUNDANCY CHECK]
     - **Normalization**: If the user says "My husband hit me" -> extract 'primary_event_overview': "Physical assault per user". 
-    - **Deduplication**: Compare with [CURRENT FACTS]. If 'event_timestamp' is already known, DO NOT include it in 'required_keys_schema' even if the user rephrases it as 'date of calling'.
-    - **Locking**: If a user previously said "No" or "Unknown" to a dimension, it is locked. Do not put it in schema.
+    - **Deduplication**: Compare with [CURRENT FACTS]. If 'event_timestamp' is already known, DO NOT include it in 'required_keys_schema'.
 
     [TASK]
     Analyze the conversation history.
     
     1. **Identify Intent**: specific factual problem.
     2. **Fact Extraction**: Extract facts using the CANONICAL KEYS above.
-       - Use "NOT_AVAILABLE" for negative answers to lock them.
-    3. **Schema Definition**: Define REQUIRED fields using ONLY the CANONICAL KEYS above.
+       - IMPORTANT: ONLY extract keys where you have ACTUAL DATA explicitly stated by the user.
+       - If the user has NOT mentioned a topic at all, DO NOT put its key in `extracted_critical_facts`. Just skip the key.
+       - NEVER use "Unknown" or "NOT_AVAILABLE". If the answer is unknown because the user hasn't said it yet, simply omit the key entirely from your output.
+       - NEVER output "EXPLICITLY_DENIED" on your own. You may ONLY output "EXPLICITLY_DENIED" if specifically instructed to do so by the [RECENT QUESTION CONTEXT] section below.
+    3. **Schema Definition**: Define `required_keys_schema` as a smart, contextual list of keys logically necessary to draft a useful legal document for this intent.
+       - ALWAYS include: `user_full_name`, `user_address`, `user_phone`, `incident_date`, `incident_description`.
+       - If there is another party involved, include `counterparty_name`.
+       - ONLY include specific keys (like `product_name`, `stolen_items`, `financial_loss_value`, `evidence_available`, etc.) IF they are directly relevant to the specific problem.
+       - DO NOT ask for irrelevant details. For example, do not ask for `stolen_items` in a rental dispute. Do not ask for `defect_description` in an assault case.
+       - STRICT LIMIT: You MUST output a MAXIMUM of 12 keys total in `required_keys_schema`. Ensure you include enough specific keys to build a robust legal case without badgering the user with unnecessary details.
+    {f'''[RECENT QUESTION CONTEXT]
+    The system's most recent question was trying to figure out the key: `{list(asked_facts)[-1]}`.
+    If the user's latest response is a generic "I don't know", "No", "Not sure", or "None" without extra context, they are explicitly denying knowledge for that specific key.
+    YOU MUST ADD the key `{list(asked_facts)[-1]}` to `extracted_critical_facts` and set its value to exactly "EXPLICITLY_DENIED". DO NOT SKIP IT. This is a critical system requirement.''' if asked_facts else ''}
     
     [CURRENT FACTS]
     Critical: {json.dumps(current_critical)}
@@ -170,12 +190,13 @@ def analyze_legal_context_node(state: LegalState):
     
     [SAFETY CHECK (CRITICAL)]
     Analyze if the user input involves:
-    - Immediate danger to life
-    - Violence / Physical Assault (ongoing or planned)
-    - Serious criminal activity (not just civil disputes)
-    - Emergency situations
+    - Immediate danger to life (RIGHT NOW)
+    - Violence / Physical Assault (ongoing or planned RIGHT NOW)
+    - Serious criminal activity (ongoing RIGHT NOW, not past)
     
-    If ANY of these are detected, set "safety_status": "UNSAFE" and "safety_reason": "Reason...".
+    OVERRIDE RULE: You MUST classify the input as "SAFE" if the user is asking how to file a complaint, requesting legal help, or talking about a past event. ANY vehicle accident, property damage, or physical injury that ALREADY HAPPENED (e.g. they survived and are asking for advice) is STRICTLY SAFE. Do NOT flag these as UNSAFE. Only flag active, ongoing, immediate 911-level threats.
+
+    If ANY ongoing immediate threats are detected, set "safety_status": "UNSAFE" and "safety_reason": "Reason...".
     Otherwise, set "safety_status": "SAFE".
 
     [OUTPUT FORMAT]
@@ -188,6 +209,10 @@ def analyze_legal_context_node(state: LegalState):
         "required_keys_schema": ["CANONICAL_KEY_1", "CANONICAL_KEY_2"]
     }}
     """
+    
+    print("DEBUG PROMPT RECENT CONTEXT:", f"Asked facts: {asked_facts}")
+    if asked_facts:
+        print("DEBUG RECENT_QUESTION_CONTEXT activated line:", f"The system's most recent question was trying to figure out the key: `{list(asked_facts)[-1]}`.")
     
     response = llm.invoke([
         SystemMessage(content="You are a legal reasoning engine. Output valid JSON only."),
@@ -203,6 +228,7 @@ def analyze_legal_context_node(state: LegalState):
         
         # New extractions
         new_critical = analysis.get("extracted_critical_facts", {})
+        print(f"DEBUG: LLM Raw Critical Extracted: {new_critical}")
         normalized_critical = {}
         for k, v in new_critical.items():
             canonical_key = CANONICAL_ALIASES.get(k, k)
@@ -214,6 +240,7 @@ def analyze_legal_context_node(state: LegalState):
             CANONICAL_ALIASES.get(k, k)
             for k in analysis.get("required_keys_schema", [])
         ]
+        print(f"DEBUG: Required Keys Output from LLM: {required_keys}")
 
         intent = analysis.get("intent", "Unknown")
         
@@ -245,12 +272,17 @@ def analyze_legal_context_node(state: LegalState):
         updated_critical = current_critical.copy()
         
         for k, v in new_critical.items():
-            v = normalize_value(v)
-
-            if v == "NOT_AVAILABLE":
-                answered_facts[k] = "NOT_AVAILABLE"
-                updated_critical[k] = "NOT_AVAILABLE"
+            if v is None:
                 continue
+            
+            str_v = str(v).lower()
+            if any(hallucination in str_v for hallucination in ["none", "null", "not_available", "unknown", "(unknown)", "tbd", "n/a"]):
+                continue
+                
+            if str(v).upper() == "EXPLICITLY_DENIED":
+                v = "EXPLICITLY_DENIED"
+            else:
+                v = normalize_value(v)
             # Check for conflict resolution
             if k in fact_conflicts:
                 # User provided a value for a specifically conflicted field
@@ -263,9 +295,16 @@ def analyze_legal_context_node(state: LegalState):
             elif k in answered_facts:
                 existing_val = str(answered_facts[k]).strip()
                 new_val = str(v).strip()
-                
+
+                if existing_val == "EXPLICITLY_DENIED" and new_val != "EXPLICITLY_DENIED":
+                    # User clarified a previously denied/unknown fact. Overwrite it.
+                    answered_facts[k] = new_val
+                    updated_critical[k] = new_val
+                elif existing_val != "EXPLICITLY_DENIED" and new_val == "EXPLICITLY_DENIED":
+                    # LLM wrongly flagged as denied when we already have a valid value. Ignore.
+                    pass
                 # 1. Exact Match: No Op
-                if existing_val.lower() == new_val.lower():
+                elif existing_val.lower() == new_val.lower():
                     pass
                 
                 # Global Constraint: DO NOT MODIFY numeric values
@@ -298,8 +337,7 @@ def analyze_legal_context_node(state: LegalState):
                 if k not in answered_facts: # Treat optional same as critical for locking
                     answered_facts[k] = v
                     updated_optional[k] = v
-                    # Optional facts don't necessarily count for "critical" readiness but good to track
-
+                    newly_added_facts_count += 1
                     # Optional facts don't necessarily count for "critical" readiness but good to track
 
         # --- MODE 2 EXPRESS TRIGGER (STRICT) ---
@@ -337,21 +375,40 @@ def analyze_legal_context_node(state: LegalState):
         missing_critical_fields = []
 
         for key in required_keys:
+<<<<<<< HEAD
             if key in answered_facts:
                 present_critical_count += 1  # FIX: count answered critical facts
                 continue  # already answered or locked
+=======
+            val = answered_facts.get(key)
+            if val is not None and str(val).strip() != "" and str(val).lower() not in ["none", "null", "not_available", "unknown"]:
+                present_critical_count += 1
+                continue  # already answered with valid content
+            elif val == "EXPLICITLY_DENIED":
+                # Explicitly locked by user
+                present_critical_count += 1
+                continue
+            
+>>>>>>> 2731c03e28371344070674f9e76d8b65858df36f
             missing_critical_fields.append(key)
 
                 
         # --- READINESS CALCULATION ---
-        total_required = len(required_keys)
+        # Base readiness dynamically on the required_keys_schema the LLM decided on
+        total_required = present_critical_count + len(missing_critical_fields)
+        
         readiness_score = 0
         if total_required > 0:
             readiness_score = int((present_critical_count / total_required) * 100)
             
         # Fallback for generic intents
-        if readiness_score == 0 and len(answered_facts) > 3:
+        if total_required == 0 and len(answered_facts) > 3:
             readiness_score = 50
+            
+        # Guard 0: Prevent backwards movement of score if LLM adds many missing fields suddenly
+        previous_score = state.get("readiness_score", 0)
+        if readiness_score < previous_score:
+             readiness_score = previous_score
             
         # Guard 1: Anti-Inflation
         previous_score = state.get("readiness_score", 0)
@@ -427,17 +484,26 @@ def analyze_legal_context_node(state: LegalState):
                 next_step = "ask_question"
                 last_rejection = current_turn_count
                 
-            # Explicit Approval -> Generate
+            # Explicit Approval -> Generate Options
             # STRICT KEYWORD: "CONFIRM"
             elif "CONFIRM" in last_msg:
-                next_step = "generate_document"
-                new_stage = "completed"
+                next_step = "ask_action_choice"
+                new_stage = "action_choice"
                 
             # Anything else -> Repeat Confirmation Question
             else:
                 next_step = "ask_confirmation" 
                 
-        else:
+        elif current_stage == "action_choice":
+            last_msg = messages[-1].content.strip()
+            if last_msg.startswith("ACTION:"):
+                # User selected an action
+                intent = last_msg.replace("ACTION:", "").strip()
+                next_step = "generate_document"
+                new_stage = "completed"
+            else:
+                next_step = "ask_action_choice"
+                new_stage = "action_choice"
             # Investigation stage
             # If conflicts exist, we MUST stay in investigation/questioning
             if len(fact_conflicts) > 0:
@@ -546,25 +612,75 @@ Return ONLY the translated message."""
             "asked_facts": asked_facts
         }
     
-    # STRUCTURED INTERVIEW - Ask specific questions based on what's missing
-    # Define the interview structure based on document type
-    question_sequence = get_question_sequence(intent, answered_facts, asked_facts)
-    
-    if question_sequence:
-        next_question_data = question_sequence[0]
-        asked_facts.append(next_question_data["field"])
-        
-        question_text = next_question_data["question"]
-        
-        # Translate if needed
+    # Action Choice Generation
+    if next_step == "ask_action_choice":
+        facts = state.get("legal_facts", {})
+        suggestions_prompt = f"""Based on the legal intent '{intent}' and the provided facts:
+        1. Specifically suggest 2 to 4 distinct legal cases or actions the user can file for.
+        2. Provide a short list of pros and cons for each.
+        Format the output STRICTLY as a JSON array of objects, with NO markdown formatting:
+        [
+          {{"title": "Action Name", "pros": ["Pro 1"], "cons": ["Con 1"]}}
+        ]
+        Facts: {json.dumps(facts)}"""
         if lang != "en":
-            prompt = f"""Translate the following question to {lang}, keeping it natural and conversational:
-
-{question_text}
-
-Return ONLY the translated question."""
-            response = llm.invoke([HumanMessage(content=prompt)])
-            question_text = response.content.strip()
+            suggestions_prompt += f"\nPlease translate the 'title', 'pros', and 'cons' strings to {lang}, but MUST keep the JSON array structure and keys 'title', 'pros', 'cons' exactly in English."
+            
+        response = llm.invoke([SystemMessage(content="Output valid JSON array only."), HumanMessage(content=suggestions_prompt)])
+        content = response.content.strip()
+        import re
+        match = re.search(r'\[.*\]', content, re.DOTALL)
+        if match:
+            content = match.group(0)
+        else:
+            content = content.replace("```json", "").replace("```", "").strip()
+            
+        return {
+            "generated_content": f"ACTION_CHOICES:{content}",
+            "asked_facts": asked_facts
+        }
+    
+    # STRUCTURED INTERVIEW - Ask specific questions based on what's missing
+    missing_fields = state.get("missing_fields", [])
+    
+    if missing_fields:
+        # Choose the first missing field that hasn't been asked yet in the recent turn
+        # If all missing fields have been asked, we just pick the first one again to clarify
+        target_field = missing_fields[0]
+        for field in missing_fields:
+            if field not in asked_facts:
+                target_field = field
+                break
+                
+        asked_facts.append(target_field)
+        
+        # Format recent conversation history for context
+        recent_msgs = messages[-4:] if len(messages) >= 4 else messages
+        history_text = "\n".join([f"{'User' if m.type == 'human' else 'Assistant'}: {m.content}" for m in recent_msgs])
+        
+        # Ask LLM to generate the next conversational question
+        prompt = f"""
+        You are 'Satta Vizhi', an expert empathetic Legal AI Assistant.
+        
+        [CONTEXT]
+        Legal Issue / Intent: {intent}
+        Current Missing Information we need: '{target_field}'
+        Language to respond in: {lang}
+        
+        [RECENT CONVERSATION]
+        {history_text}
+        
+        [TASK]
+        1. Formulate exactly ONE natural, conversational follow-up question to ask the user for the specific Missing Information field: '{target_field}'.
+        2. You MUST ONLY ask for information logically related to '{target_field}'. DO NOT invent new things to ask about (e.g. do not ask for date of birth, identification numbers, etc., unless that is the exact target field).
+        3. Keep the question polite, empathetic, and strictly focused on getting '{target_field}'.
+        4. DO NOT explain yourself, DO NOT use markdown, and DO NOT wrap it in quotes.
+        
+        Respond ONLY with the exact question text in {lang}.
+        """
+        
+        response = llm.invoke([SystemMessage(content="You are a conversational legal question generator."), HumanMessage(content=prompt)])
+        question_text = response.content.strip()
         
         return {
             "generated_content": question_text,
@@ -776,6 +892,16 @@ def generate_document_node(state: LegalState):
         "is_bilingual": True
     }
     
+    # Generate final suggestions (maybe simpler since they already chose, but let's keep it minimal)
+    suggestions_prompt = f"""Based on the legal intent '{intent}' and the provided facts:
+    List 3 concrete next steps to proceed with this selected action.
+    Make it concise, easy to read, and bulleted.
+    Facts: {json.dumps(facts)}"""
+    if lang != "en":
+        suggestions_prompt += f"\nPlease translate the output to {lang}."
+    suggestions_response = llm.invoke([HumanMessage(content=suggestions_prompt)])
+    suggestions = suggestions_response.content.strip()
+    
     # For backward compatibility, also set generated_content
     # This will be the user language version for display
     generated_content = f"""# Legal Document - {bilingual_result['document_type'].replace('_', ' ').title()}
@@ -794,6 +920,11 @@ def generate_document_node(state: LegalState):
 ## English Version (For Official Submission)
 
 {bilingual_result['english_content']}
+
+---
+
+## Suggestions / Next Steps
+{suggestions}
 
 ---
 
@@ -824,10 +955,11 @@ workflow.add_conditional_edges(
     check_next_step,
     {
         "ask_question": "generate_question",
-        "ask_confirmation": "generate_question", # Re-use generic question node but with different prompt logic
-        "refusal": "generate_question", # Handle safety refusal in question node
+        "ask_confirmation": "generate_question", 
+        "ask_action_choice": "generate_question",
+        "refusal": "generate_question", 
         "generate_document": "generate_document",
-        "completed": "generate_document" # Safety edge if stage is completed
+        "completed": "generate_document" 
     }
 )
 
@@ -899,7 +1031,9 @@ def process_message(thread_id: str, user_input: str):
             "entities": facts,
             "intent": intent,
             "readiness_score": score,
-            "is_document": next_step == "generate_document"
+            "is_document": next_step == "generate_document",
+            "is_confirmation": next_step == "ask_confirmation",
+            "is_action_choice": next_step == "ask_action_choice"
         }
 
     # 2. INVOKE GRAPH
@@ -924,5 +1058,7 @@ def process_message(thread_id: str, user_input: str):
         "entities": facts,
         "intent": intent,
         "readiness_score": score,
-        "is_document": next_step == "generate_document"
+        "is_document": next_step == "generate_document",
+        "is_confirmation": next_step == "ask_confirmation",
+        "is_action_choice": next_step == "ask_action_choice"
     }
