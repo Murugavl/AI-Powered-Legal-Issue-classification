@@ -338,6 +338,7 @@ def analyze_legal_context_node(state: LegalState):
 
         for key in required_keys:
             if key in answered_facts:
+                present_critical_count += 1  # FIX: count answered critical facts
                 continue  # already answered or locked
             missing_critical_fields.append(key)
 
@@ -865,6 +866,16 @@ app = workflow.compile(checkpointer=checkpointer)
 import hashlib
 
 def process_message(thread_id: str, user_input: str):
+    # INPUT VALIDATION: Reject empty or trivially short inputs
+    if not user_input or len(user_input.strip()) < 3:
+        return {
+            "content": "Please describe your legal issue in more detail so I can help you.",
+            "entities": {},
+            "intent": "",
+            "readiness_score": 0,
+            "is_document": False
+        }
+
     config = {"configurable": {"thread_id": thread_id}}
     
     # 1. IDEMPOTENCY CHECK

@@ -15,9 +15,9 @@ if not GROQ_API_KEY:
     print("WARNING: GROQ_API_KEY not found. Please set it in .env file.")
 
 # Initialize Groq LLM
-# Model options: llama3-70b-8192 (recommended), llama3-8b-8192, mixtral-8x7b-32768
+# Model options: llama-3.3-70b-versatile (recommended), llama-3.1-8b-instant (fast/cheap), mixtral-8x7b-32768
 llm = ChatGroq(
     temperature=0.2,
-    model_name="llama-3.1-8b-instant",
+    model_name="llama-3.3-70b-versatile",  # Upgraded: far better JSON accuracy for legal reasoning
     groq_api_key=GROQ_API_KEY
 )
