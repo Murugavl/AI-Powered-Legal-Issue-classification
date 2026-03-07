@@ -10,77 +10,81 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/session")
+@CrossOrigin(origins = "*")
 public class SessionController {
 
-    @Autowired
-    private SessionService sessionService;
+    @Autowired private SessionService sessionService;
+    @Autowired private JwtUtil        jwtUtil;
 
-    @Autowired
-    private JwtUtil jwtUtil;
-
+    /** Start a new session with the user's initial problem description */
     @PostMapping("/start")
     public ResponseEntity<SessionResponse> startSession(
             @RequestHeader("Authorization") String token,
             @RequestBody StartSessionRequest request) {
-
-        String phoneNumber = getPhoneNumberFromToken(token);
-        return ResponseEntity.ok(sessionService.startSession(request, phoneNumber));
+        return ResponseEntity.ok(sessionService.startSession(request, phoneFrom(token)));
     }
 
+    /** Submit a text answer / reply during an active session */
     @PostMapping("/{sessionId}/answer")
     public ResponseEntity<SessionResponse> submitAnswer(
             @RequestHeader("Authorization") String token,
-            @PathVariable("sessionId") String sessionId,
+            @PathVariable String sessionId,
             @RequestBody SubmitAnswerRequest request) {
-        String phoneNumber = getPhoneNumberFromToken(token);
-        return ResponseEntity.ok(sessionService.submitAnswer(sessionId, request, phoneNumber));
+        return ResponseEntity.ok(sessionService.submitAnswer(sessionId, request, phoneFrom(token)));
     }
 
+    /** Submit a voice transcript (audio file stored, transcript processed as text) */
     @PostMapping("/{sessionId}/answer-voice")
     public ResponseEntity<SessionResponse> submitVoiceAnswer(
             @RequestHeader("Authorization") String token,
-            @PathVariable("sessionId") String sessionId,
-            @RequestParam("audio") MultipartFile audioFile,
+            @PathVariable String sessionId,
+            @RequestParam(value = "audio",      required = false) MultipartFile audioFile,
             @RequestParam(value = "transcript", required = false) String transcript,
-            @RequestParam(value = "language", defaultValue = "en") String language) {
-        String phoneNumber = getPhoneNumberFromToken(token);
-        return ResponseEntity
-                .ok(sessionService.submitVoiceAnswer(sessionId, audioFile, transcript, language, phoneNumber));
+            @RequestParam(value = "language",   defaultValue = "en") String language) {
+        return ResponseEntity.ok(
+                sessionService.submitVoiceAnswer(sessionId, audioFile, transcript, language, phoneFrom(token)));
     }
 
+    /** Upload an evidence file — the filename is forwarded to the NLP engine as context */
     @PostMapping("/{sessionId}/evidence")
     public ResponseEntity<SessionResponse> uploadEvidence(
             @RequestHeader("Authorization") String token,
-            @PathVariable("sessionId") String sessionId,
+            @PathVariable String sessionId,
             @RequestParam("file") MultipartFile file) {
-        String phoneNumber = getPhoneNumberFromToken(token);
-        return ResponseEntity.ok(sessionService.uploadEvidence(sessionId, file, phoneNumber));
+        return ResponseEntity.ok(sessionService.uploadEvidence(sessionId, file, phoneFrom(token)));
     }
 
-    @DeleteMapping("/{sessionId}")
-    public ResponseEntity<Void> deleteSession(
-            @RequestHeader("Authorization") String token,
-            @PathVariable("sessionId") String sessionId) {
-        String phoneNumber = getPhoneNumberFromToken(token);
-        sessionService.deleteSession(sessionId, phoneNumber);
-        return ResponseEntity.ok().build();
-    }
-
+    /** Get current session status (intent, readiness score, status) */
     @GetMapping("/{sessionId}")
     public ResponseEntity<SessionResponse> getSessionStatus(
             @RequestHeader("Authorization") String token,
-            @PathVariable("sessionId") String sessionId) {
-
-        String phoneNumber = getPhoneNumberFromToken(token);
-        return ResponseEntity.ok(sessionService.getSessionStatus(sessionId, phoneNumber));
+            @PathVariable String sessionId) {
+        return ResponseEntity.ok(sessionService.getSessionStatus(sessionId, phoneFrom(token)));
     }
 
-    private String getPhoneNumberFromToken(String token) {
-        if (token != null && token.startsWith("Bearer ")) {
-            token = token.substring(7);
-        }
+    /** List all sessions for the authenticated user */
+    @GetMapping
+    public ResponseEntity<List<SessionResponse>> getUserSessions(
+            @RequestHeader("Authorization") String token) {
+        return ResponseEntity.ok(sessionService.getUserSessions(phoneFrom(token)));
+    }
+
+    /** Delete a session and all its associated data */
+    @DeleteMapping("/{sessionId}")
+    public ResponseEntity<Void> deleteSession(
+            @RequestHeader("Authorization") String token,
+            @PathVariable String sessionId) {
+        sessionService.deleteSession(sessionId, phoneFrom(token));
+        return ResponseEntity.ok().build();
+    }
+
+    // ---- helper ----
+    private String phoneFrom(String token) {
+        if (token != null && token.startsWith("Bearer ")) token = token.substring(7);
         return jwtUtil.getPhoneNumberFromToken(token);
     }
 }

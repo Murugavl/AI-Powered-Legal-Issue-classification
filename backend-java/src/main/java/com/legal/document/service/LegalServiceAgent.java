@@ -2,19 +2,16 @@ package com.legal.document.service;
 
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.http.ResponseEntity;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import org.springframework.http.*;
 
-import java.util.Map;
 import java.util.HashMap;
+import java.util.Map;
 
 @Service
 public class LegalServiceAgent {
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private final String pythonServiceUrl = "http://localhost:8000/process";
+    private final String pythonServiceUrl   = "http://localhost:8000/process";
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> processUserMessage(String threadId, String input) {
@@ -22,26 +19,31 @@ public class LegalServiceAgent {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
 
-            Map<String, String> requestBody = new HashMap<>();
-            requestBody.put("thread_id", threadId);
-            requestBody.put("message", input);
+            Map<String, String> body = new HashMap<>();
+            body.put("thread_id", threadId);
+            body.put("message",   input);
 
-            HttpEntity<Map<String, String>> request = new HttpEntity<>(requestBody, headers);
-
-            ResponseEntity<Map> response = restTemplate.postForEntity(pythonServiceUrl, request, Map.class);
+            ResponseEntity<Map> response = restTemplate.postForEntity(
+                    pythonServiceUrl,
+                    new HttpEntity<>(body, headers),
+                    Map.class);
 
             if (response.getBody() != null && response.getBody().containsKey("result")) {
                 return (Map<String, Object>) response.getBody().get("result");
             }
-            Map<String, Object> error = new HashMap<>();
-            error.put("content", "Error: Empty response from AI service.");
-            return error;
 
         } catch (Exception e) {
             e.printStackTrace();
-            Map<String, Object> error = new HashMap<>();
-            error.put("content", "Error connecting to AI service: " + e.getMessage());
-            return error;
         }
+
+        // Fallback — return a safe error message so the frontend never gets a blank response
+        Map<String, Object> error = new HashMap<>();
+        error.put("content",        "I'm having trouble connecting to the AI engine. Please try again in a moment.");
+        error.put("is_document",    false);
+        error.put("is_confirmation",false);
+        error.put("readiness_score",0);
+        error.put("intent",         "");
+        error.put("entities",       new HashMap<>());
+        return error;
     }
 }

@@ -5,54 +5,37 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.util.HashMap;
+import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(RuntimeException.class)
-    public ResponseEntity<Map<String, String>> handleRuntimeException(RuntimeException ex) {
-        ex.printStackTrace(); // Print to console logs
-        Map<String, String> response = new HashMap<>();
-        // Use "message" as key because frontend expects err.response.data.message
-        response.put("message", ex.getMessage());
+    public ResponseEntity<Map<String, Object>> handleRuntimeException(RuntimeException ex) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", LocalDateTime.now().toString());
+        body.put("error",     ex.getMessage());
 
-        // Return 400 Bad Request for logic errors (like duplicate user, invalid
-        // password)
-        // Instead of 500 which implies server crash
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
-    }
+        HttpStatus status = HttpStatus.INTERNAL_SERVER_ERROR;
+        String msg = ex.getMessage() != null ? ex.getMessage().toLowerCase() : "";
+        if (msg.contains("not found"))       status = HttpStatus.NOT_FOUND;
+        if (msg.contains("unauthorized"))    status = HttpStatus.FORBIDDEN;
+        if (msg.contains("invalid credentials") || msg.contains("inactive")) status = HttpStatus.UNAUTHORIZED;
+        if (msg.contains("already registered")) status = HttpStatus.CONFLICT;
 
-    @ExceptionHandler(org.springframework.web.bind.MethodArgumentNotValidException.class)
-    public ResponseEntity<Map<String, String>> handleValidationException(
-            org.springframework.web.bind.MethodArgumentNotValidException ex) {
-        ex.printStackTrace();
-        Map<String, String> response = new HashMap<>();
-        StringBuilder sb = new StringBuilder();
-        ex.getBindingResult().getAllErrors().forEach(error -> {
-            sb.append(error.getDefaultMessage()).append("; ");
-        });
-        response.put("message", sb.toString());
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);
-    }
-
-    @ExceptionHandler(org.springframework.web.HttpRequestMethodNotSupportedException.class)
-    public ResponseEntity<Map<String, String>> handleMethodNotSupported(
-            org.springframework.web.HttpRequestMethodNotSupportedException ex) {
-        ex.printStackTrace();
-        Map<String, String> response = new HashMap<>();
-        response.put("message", "Method Not Allowed: " + ex.getMessage());
-        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(response);
+        body.put("status", status.value());
+        return ResponseEntity.status(status).body(body);
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, String>> handleGenericException(Exception ex) {
-        System.err.println("===== UNEXPECTED SYSTEM ERROR =====");
+    public ResponseEntity<Map<String, Object>> handleGenericException(Exception ex) {
         ex.printStackTrace();
-        Map<String, String> response = new HashMap<>();
-        response.put("message",
-                "An unexpected error occurred: " + ex.getClass().getSimpleName() + " - " + ex.getMessage());
-        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(response);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("timestamp", LocalDateTime.now().toString());
+        body.put("status",    500);
+        body.put("error",     "An unexpected error occurred. Please try again.");
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(body);
     }
 }

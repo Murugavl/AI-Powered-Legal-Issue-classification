@@ -5,140 +5,40 @@ import java.util.Map;
 public class SessionResponse {
     private String sessionId;
     private String status;
-    private String nextQuestion; // The clarification question
+    private String message;          // chat message shown to user
     private String detectedIntent;
-    private String detectedDomain;
-    private Double confidenceScore;
-    private Map<String, String> extractedEntities; // Confirmed facts
+    private Map<String, String> extractedEntities; // facts collected so far
     private boolean isComplete;
-    private boolean isConfirmation;
-    private boolean isActionChoice;
-    private String suggestedSections;
+    private boolean isConfirmation;  // true when showing summary for user to confirm
     private Integer readinessScore;
-    private String readinessStatus;
-    private String readinessFeedback;
-    private Map<String, Object> filingGuidance;
+    private String documentPayload;  // JSON string of bilingual document (when isComplete=true)
 
-    public SessionResponse() {
-    }
+    public SessionResponse() {}
 
-    public String getSessionId() {
-        return sessionId;
-    }
+    public String getSessionId()                              { return sessionId; }
+    public void   setSessionId(String v)                      { this.sessionId = v; }
 
-    public void setSessionId(String sessionId) {
-        this.sessionId = sessionId;
-    }
+    public String getStatus()                                 { return status; }
+    public void   setStatus(String v)                         { this.status = v; }
 
-    public String getStatus() {
-        return status;
-    }
+    public String getMessage()                                { return message; }
+    public void   setMessage(String v)                        { this.message = v; }
 
-    public void setStatus(String status) {
-        this.status = status;
-    }
+    public String getDetectedIntent()                         { return detectedIntent; }
+    public void   setDetectedIntent(String v)                 { this.detectedIntent = v; }
 
-    public String getNextQuestion() {
-        return nextQuestion;
-    }
+    public Map<String, String> getExtractedEntities()         { return extractedEntities; }
+    public void   setExtractedEntities(Map<String, String> v) { this.extractedEntities = v; }
 
-    public void setNextQuestion(String nextQuestion) {
-        this.nextQuestion = nextQuestion;
-    }
+    public boolean isComplete()                               { return isComplete; }
+    public void    setComplete(boolean v)                     { this.isComplete = v; }
 
-    public String getDetectedIntent() {
-        return detectedIntent;
-    }
+    public boolean isConfirmation()                           { return isConfirmation; }
+    public void    setConfirmation(boolean v)                 { this.isConfirmation = v; }
 
-    public void setDetectedIntent(String detectedIntent) {
-        this.detectedIntent = detectedIntent;
-    }
+    public Integer getReadinessScore()                        { return readinessScore; }
+    public void    setReadinessScore(Integer v)               { this.readinessScore = v; }
 
-    public String getDetectedDomain() {
-        return detectedDomain;
-    }
-
-    public void setDetectedDomain(String detectedDomain) {
-        this.detectedDomain = detectedDomain;
-    }
-
-    public Double getConfidenceScore() {
-        return confidenceScore;
-    }
-
-    public void setConfidenceScore(Double confidenceScore) {
-        this.confidenceScore = confidenceScore;
-    }
-
-    public Map<String, String> getExtractedEntities() {
-        return extractedEntities;
-    }
-
-    public void setExtractedEntities(Map<String, String> extractedEntities) {
-        this.extractedEntities = extractedEntities;
-    }
-
-    public boolean isComplete() {
-        return isComplete;
-    }
-
-    public void setComplete(boolean complete) {
-        isComplete = complete;
-    }
-
-    public boolean isConfirmation() {
-        return isConfirmation;
-    }
-
-    public void setConfirmation(boolean confirmation) {
-        isConfirmation = confirmation;
-    }
-
-    public boolean isActionChoice() {
-        return isActionChoice;
-    }
-
-    public void setActionChoice(boolean actionChoice) {
-        isActionChoice = actionChoice;
-    }
-
-    public String getSuggestedSections() {
-        return suggestedSections;
-    }
-
-    public void setSuggestedSections(String suggestedSections) {
-        this.suggestedSections = suggestedSections;
-    }
-
-    public Integer getReadinessScore() {
-        return readinessScore;
-    }
-
-    public void setReadinessScore(Integer readinessScore) {
-        this.readinessScore = readinessScore;
-    }
-
-    public String getReadinessStatus() {
-        return readinessStatus;
-    }
-
-    public void setReadinessStatus(String readinessStatus) {
-        this.readinessStatus = readinessStatus;
-    }
-
-    public String getReadinessFeedback() {
-        return readinessFeedback;
-    }
-
-    public void setReadinessFeedback(String readinessFeedback) {
-        this.readinessFeedback = readinessFeedback;
-    }
-
-    public Map<String, Object> getFilingGuidance() {
-        return filingGuidance;
-    }
-
-    public void setFilingGuidance(Map<String, Object> filingGuidance) {
-        this.filingGuidance = filingGuidance;
-    }
+    public String getDocumentPayload()                        { return documentPayload; }
+    public void   setDocumentPayload(String v)                { this.documentPayload = v; }
 }
