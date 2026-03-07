@@ -11,17 +11,19 @@ public class CreateCaseRequest {
     private Map<String, Object> entities;
     private String issueType;
     private String subCategory;
+    private String sessionId;
 
     public CreateCaseRequest() {
     }
 
     public CreateCaseRequest(String initialText, String language, Map<String, Object> entities, String issueType,
-            String subCategory) {
+            String subCategory, String sessionId) {
         this.initialText = initialText;
         this.language = language;
         this.entities = entities;
         this.issueType = issueType;
         this.subCategory = subCategory;
+        this.sessionId = sessionId;
     }
 
     public String getInitialText() {
@@ -62,5 +64,13 @@ public class CreateCaseRequest {
 
     public void setSubCategory(String subCategory) {
         this.subCategory = subCategory;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 }

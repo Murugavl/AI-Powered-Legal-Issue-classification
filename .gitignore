@@ -58,3 +58,5 @@ nlp-python/.pytest_cache/
 *.lock.db
 *.trace.db
 backend-java/data/
+# pdf files
+*.pdf

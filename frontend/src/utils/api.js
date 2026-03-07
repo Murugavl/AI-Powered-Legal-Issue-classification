@@ -22,7 +22,7 @@ const nlpApi = axios.create({
 // Request interceptor to add JWT token
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('token');
+    const token = sessionStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -39,8 +39,8 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401 || error.response?.status === 403) {
       // Token expired or invalid
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
+      sessionStorage.removeItem('token');
+      sessionStorage.removeItem('user');
       window.location.href = '/login';
     }
     return Promise.reject(error);
@@ -51,11 +51,15 @@ api.interceptors.response.use(
 export const authAPI = {
   register: (data) => api.post('/auth/register', data),
   login: (data) => api.post('/auth/login', data),
+  forgotPassword: (data) => api.post('/auth/forgot-password', data),
+  verifyOtp: (data) => api.post('/auth/verify-otp', data),
+  resetPassword: (data) => api.post('/auth/reset-password', data),
 };
 
 // Case API
 export const caseAPI = {
   create: (data) => api.post('/cases/create', data),
+  update: (id, data) => api.put(`/cases/${id}`, data),
   getMyCases: () => api.get('/cases/my-cases'),
   getById: (id) => api.get(`/cases/${id}`),
   confirmEntity: (id, payload) => api.post(`/cases/${id}/confirm-entity`, payload),
@@ -68,6 +72,8 @@ export const sessionAPI = {
   answer: (sessionId, answerText) => api.post(`/session/${sessionId}/answer`, { answerText }),
   answerVoice: (sessionId, formData) => api.post(`/session/${sessionId}/answer-voice`, formData),
   getStatus: (sessionId) => api.get(`/session/${sessionId}/status`),
+  getHistory: (sessionId) => api.get(`/session/${sessionId}/history`),
+  deleteSession: (sessionId) => api.delete(`/session/${sessionId}`),
 };
 
 // Document API

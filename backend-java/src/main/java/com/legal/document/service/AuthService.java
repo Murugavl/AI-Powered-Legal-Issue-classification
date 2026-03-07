@@ -78,4 +78,43 @@ public class AuthService {
                 user.getFullName(),
                 user.getPreferredLanguage());
     }
+
+    private final java.util.Map<String, String> otpStorage = new java.util.concurrent.ConcurrentHashMap<>();
+
+    public String generateAndSendOtp(String phoneNumber) {
+        // Find user by phone number
+        userRepository.findByPhoneNumber(phoneNumber)
+                .orElseThrow(() -> new RuntimeException("User not found with this phone number"));
+
+        // Generate 6 digit OTP
+        String otp = String.format("%06d", new java.util.Random().nextInt(999999));
+        otpStorage.put(phoneNumber, otp);
+
+        // Simulate sending OTP
+        System.out.println("OTP for " + phoneNumber + " is: " + otp);
+        return otp;
+    }
+
+    public boolean verifyOtp(String phoneNumber, String otp) {
+        String storedOtp = otpStorage.get(phoneNumber);
+        if (storedOtp != null && storedOtp.equals(otp)) {
+            return true;
+        }
+        return false;
+    }
+
+    public void resetPassword(String phoneNumber, String otp, String newPassword) {
+        if (!verifyOtp(phoneNumber, otp)) {
+            throw new RuntimeException("Invalid or expired OTP");
+        }
+
+        User user = userRepository.findByPhoneNumber(phoneNumber)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        // Remove OTP after successful reset
+        otpStorage.remove(phoneNumber);
+    }
 }

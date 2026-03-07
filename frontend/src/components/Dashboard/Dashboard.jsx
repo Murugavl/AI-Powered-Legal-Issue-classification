@@ -31,7 +31,13 @@ function Dashboard() {
   };
 
   const handleNewCase = () => navigate('/new-case');
-  const handleViewCase = (caseId) => navigate(`/case/${caseId}`);
+  const handleViewCase = (caseId, status) => {
+    if (status === 'draft') {
+      navigate(`/new-case?caseId=${caseId}`);
+    } else {
+      navigate(`/case/${caseId}`);
+    }
+  };
 
   const handleDeleteCase = async (e, caseId) => {
     e.stopPropagation();
@@ -111,7 +117,7 @@ function Dashboard() {
               <div
                 key={caseItem.caseId}
                 className="case-card glass-card"
-                onClick={() => handleViewCase(caseItem.caseId)}
+                onClick={() => handleViewCase(caseItem.caseId, caseItem.status)}
               >
                 <div className="case-header">
                   <span className={`status-badge status-${caseItem.status}`}>

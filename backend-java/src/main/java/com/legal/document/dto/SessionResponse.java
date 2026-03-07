@@ -18,6 +18,7 @@ public class SessionResponse {
     private String readinessStatus;
     private String readinessFeedback;
     private Map<String, Object> filingGuidance;
+    private Map<String, Object> bilingualDocument;
 
     public SessionResponse() {
     }
@@ -140,5 +141,13 @@ public class SessionResponse {
 
     public void setFilingGuidance(Map<String, Object> filingGuidance) {
         this.filingGuidance = filingGuidance;
+    }
+
+    public Map<String, Object> getBilingualDocument() {
+        return bilingualDocument;
+    }
+
+    public void setBilingualDocument(Map<String, Object> bilingualDocument) {
+        this.bilingualDocument = bilingualDocument;
     }
 }

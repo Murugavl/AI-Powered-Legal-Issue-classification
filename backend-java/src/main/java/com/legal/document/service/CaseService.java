@@ -13,9 +13,6 @@ import com.legal.document.util.ReferenceNumberGenerator;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import java.util.Optional;
-
-import java.math.BigDecimal;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +48,9 @@ public class CaseService {
         legalCase.setIssueType(request.getIssueType());
         legalCase.setSubCategory(request.getSubCategory());
         legalCase.setStatus("draft");
+        if (request.getSessionId() != null) {
+            legalCase.setSessionId(request.getSessionId());
+        }
 
         LegalCase savedCase = legalCaseRepository.save(legalCase);
 
@@ -64,6 +64,52 @@ public class CaseService {
                 entity.setIsConfirmed(false);
                 entity.setExtractedBy("nlp");
                 caseEntityRepository.save(entity);
+            }
+        }
+
+        return buildCaseResponse(savedCase);
+    }
+
+    @Transactional
+    public CaseResponse updateCase(Long caseId, CreateCaseRequest request, String phoneNumber) {
+        LegalCase legalCase = legalCaseRepository.findById(caseId)
+                .orElseThrow(() -> new RuntimeException("Case not found"));
+
+        if (!legalCase.getUser().getPhoneNumber().equals(phoneNumber)) {
+            throw new RuntimeException("Unauthorized access");
+        }
+
+        if (request.getIssueType() != null)
+            legalCase.setIssueType(request.getIssueType());
+        if (request.getSubCategory() != null)
+            legalCase.setSubCategory(request.getSubCategory());
+        if (request.getSessionId() != null)
+            legalCase.setSessionId(request.getSessionId());
+
+        LegalCase savedCase = legalCaseRepository.save(legalCase);
+
+        if (request.getEntities() != null) {
+            Map<String, CaseEntity> existingEntities = new HashMap<>();
+            for (CaseEntity e : caseEntityRepository.findByLegalCase(savedCase)) {
+                existingEntities.put(e.getFieldName(), e);
+            }
+
+            for (Map.Entry<String, Object> entry : request.getEntities().entrySet()) {
+                String newValue = entry.getValue() != null ? entry.getValue().toString() : null;
+
+                if (existingEntities.containsKey(entry.getKey())) {
+                    CaseEntity entity = existingEntities.get(entry.getKey());
+                    entity.setFieldValue(newValue);
+                    caseEntityRepository.save(entity);
+                } else {
+                    CaseEntity entity = new CaseEntity();
+                    entity.setLegalCase(savedCase);
+                    entity.setFieldName(entry.getKey());
+                    entity.setFieldValue(newValue);
+                    entity.setIsConfirmed(false);
+                    entity.setExtractedBy("nlp");
+                    caseEntityRepository.save(entity);
+                }
             }
         }
 
@@ -154,6 +200,7 @@ public class CaseService {
         response.setCompleteness(completeness);
         response.setCreatedAt(legalCase.getCreatedAt());
         response.setUpdatedAt(legalCase.getUpdatedAt());
+        response.setSessionId(legalCase.getSessionId());
 
         return response;
     }

@@ -198,6 +198,31 @@ public class SessionService {
             }
         }
 
+        // Readiness Status (Stage 2)
+        if (agentResponse.containsKey("readiness_status")) {
+            response.setReadinessStatus((String) agentResponse.get("readiness_status"));
+        }
+
+        // Current workflow stage
+        if (agentResponse.containsKey("current_stage")) {
+            response.setDetectedDomain((String) agentResponse.get("current_stage"));
+        }
+
+        // Suggested legal sections (Stage 3)
+        if (agentResponse.containsKey("suggested_sections")) {
+            response.setSuggestedSections((String) agentResponse.get("suggested_sections"));
+        }
+
+        // Filing guidance (Stage 3)
+        if (agentResponse.containsKey("filing_guidance")) {
+            try {
+                Map<String, Object> filingGuidance = (Map<String, Object>) agentResponse.get("filing_guidance");
+                response.setFilingGuidance(filingGuidance);
+            } catch (Exception e) {
+                // ignore
+            }
+        }
+
         if (agentResponse.containsKey("entities")) {
             try {
                 Map<String, Object> entities = (Map<String, Object>) agentResponse.get("entities");
@@ -211,7 +236,7 @@ public class SessionService {
             }
         }
 
-        // Determine completion
+        // Determine completion (Stage 7: Document Generated)
         Boolean isDoc = (Boolean) agentResponse.get("is_document");
         if (Boolean.TRUE.equals(isDoc)) {
             response.setComplete(true);
@@ -221,22 +246,54 @@ public class SessionService {
             response.setComplete(false);
         }
 
-        // Determine confirmation phase
+        // Determine confirmation phase (Stage 2)
         Boolean isConf = (Boolean) agentResponse.get("is_confirmation");
-        if (Boolean.TRUE.equals(isConf)) {
-            response.setConfirmation(true);
-        } else {
-            response.setConfirmation(false);
-        }
+        response.setConfirmation(Boolean.TRUE.equals(isConf));
 
-        // Determine action choice phase
+        // Determine action choice phase (Stages 3-4)
         Boolean isChoice = (Boolean) agentResponse.get("is_action_choice");
-        if (Boolean.TRUE.equals(isChoice)) {
-            response.setActionChoice(true);
-        } else {
-            response.setActionChoice(false);
+        response.setActionChoice(Boolean.TRUE.equals(isChoice));
+
+        // Bilingual document (when generated)
+        if (agentResponse.containsKey("bilingual_document")) {
+            try {
+                Map<String, Object> bilingualDoc = (Map<String, Object>) agentResponse.get("bilingual_document");
+                response.setBilingualDocument(bilingualDoc);
+            } catch (Exception e) {
+                // ignore
+            }
         }
 
         return response;
+    }
+
+    @Transactional
+    public java.util.List<Map<String, Object>> getSessionHistory(String sessionId, String phoneNumber) {
+        User user = userRepository.findByPhoneNumber(phoneNumber)
+                .orElseThrow(() -> new RuntimeException("User not found"));
+
+        sessionRepository.findBySessionIdAndUser_UserId(sessionId, user.getUserId())
+                .orElseThrow(() -> new RuntimeException("Session not found"));
+
+        java.util.List<CaseAnswer> answers = answerRepository.findBySession_SessionIdOrderByCreatedAtAsc(sessionId);
+
+        java.util.List<Map<String, Object>> messages = new java.util.ArrayList<>();
+        for (CaseAnswer ans : answers) {
+            if (ans.getUserResponse() != null && !ans.getUserResponse().isEmpty()) {
+                Map<String, Object> msg = new java.util.HashMap<>();
+                msg.put("id", ans.getId() + "_u");
+                msg.put("sender", "user");
+                msg.put("text", ans.getUserResponse());
+                messages.add(msg);
+            }
+            if (ans.getQuestionText() != null && !ans.getQuestionText().isEmpty()) {
+                Map<String, Object> msg = new java.util.HashMap<>();
+                msg.put("id", ans.getId() + "_s");
+                msg.put("sender", "system");
+                msg.put("text", ans.getQuestionText());
+                messages.add(msg);
+            }
+        }
+        return messages;
     }
 }

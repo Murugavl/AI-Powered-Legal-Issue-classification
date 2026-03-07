@@ -17,13 +17,14 @@ public class CaseResponse {
     private Double completeness;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private String sessionId;
 
     public CaseResponse() {
     }
 
     public CaseResponse(Long caseId, String referenceNumber, String issueType, String subCategory, String status,
             String suggestedAuthority, Map<String, EntityInfo> entities, Double completeness, LocalDateTime createdAt,
-            LocalDateTime updatedAt) {
+            LocalDateTime updatedAt, String sessionId) {
         this.caseId = caseId;
         this.referenceNumber = referenceNumber;
         this.issueType = issueType;
@@ -34,6 +35,15 @@ public class CaseResponse {
         this.completeness = completeness;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.sessionId = sessionId;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 
     public Long getCaseId() {

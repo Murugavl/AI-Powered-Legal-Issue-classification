@@ -40,12 +40,15 @@ public class LegalCase {
     @Column(name = "completed_at")
     private LocalDateTime completedAt;
 
+    @Column(name = "session_id", length = 100)
+    private String sessionId;
+
     public LegalCase() {
     }
 
     public LegalCase(Long caseId, User user, String referenceNumber, String issueType, String subCategory,
             String status, String suggestedAuthority, LocalDateTime createdAt, LocalDateTime updatedAt,
-            LocalDateTime completedAt) {
+            LocalDateTime completedAt, String sessionId) {
         this.caseId = caseId;
         this.user = user;
         this.referenceNumber = referenceNumber;
@@ -56,6 +59,7 @@ public class LegalCase {
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
         this.completedAt = completedAt;
+        this.sessionId = sessionId;
     }
 
     public Long getCaseId() {
@@ -136,6 +140,14 @@ public class LegalCase {
 
     public void setCompletedAt(LocalDateTime completedAt) {
         this.completedAt = completedAt;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public void setSessionId(String sessionId) {
+        this.sessionId = sessionId;
     }
 
     @PrePersist

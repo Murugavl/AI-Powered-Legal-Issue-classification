@@ -1,6 +1,7 @@
 import os
 import json
-from typing import TypedDict, Annotated, List, Union, Dict, Any
+from datetime import datetime
+from typing import TypedDict, Annotated, List, Union, Dict, Any, Optional
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, BaseMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
@@ -9,6 +10,19 @@ from langchain_core.output_parsers import JsonOutputParser
 # Import shared LLM provider
 from llm_provider import llm
 from bilingual_generator import generate_bilingual_document
+
+# ============================================================
+# STAGE CONSTANTS (9-Stage Indian Legal Workflow Orchestrator)
+# ============================================================
+STAGE_INTAKE          = "intake"           # Stage 1: Intelligent Issue Intake
+STAGE_READINESS       = "readiness"        # Stage 2: Legal Readiness Evaluation
+STAGE_ACTION_ID       = "action_id"        # Stage 3: Legal Action Identification
+STAGE_ACTION_EXPLAIN  = "action_explain"   # Stage 4: Action Explanation
+STAGE_ACTION_CONFIRM  = "action_confirm"   # Stage 5: Confirm Action Selection
+STAGE_DATA_COLLECT    = "data_collect"     # Stage 6: Document Data Collection
+STAGE_GEN_DOCUMENT    = "gen_document"     # Stage 7: Document Generation
+STAGE_DRAFT_MGMT      = "draft_mgmt"       # Stage 8: Draft Management
+STAGE_COMPLETE        = "completed"        # Stage 9: Completion Verification
 
 # Normalize user answers so "No / Unknown" are terminal
 def normalize_value(v):
@@ -57,10 +71,20 @@ class LegalState(TypedDict):
     answered_facts: Dict[str, Any]    # Dict of facts explicitly answered {key: value}
     fact_conflicts: Dict[str, List[Any]] # Conflicting values {key: [val1, val2]}
     
-    stage: str                       # "investigation", "confirmation", "completed"
+    stage: str                       # Current stage name (matches STAGE_* constants)
     turn_count: int                  # Turn counter to force clarification loops
     last_input_hash: str             # Idempotency check
     fallback_turn: int               # Turn number when fallback question was asked (-1 if not asked)
+
+    # Stage 3-5 Action Selection
+    legal_actions: List[Dict]        # Legal actions identified in Stage 3
+    selected_action: Optional[str]   # User's chosen legal action (Stage 5)
+
+    # Stage 9 Completion Checklist
+    checklist: Dict[str, bool]
+
+    # Bilingual document (Stage 7)
+    bilingual_document: Optional[Dict]
 
 # Node: Detect Language
 def detect_language_node(state: LegalState):
@@ -111,6 +135,7 @@ def analyze_legal_context_node(state: LegalState):
         answered_facts = raw_answered
         
     fact_conflicts = state.get("fact_conflicts", {})
+    selected_action = state.get("selected_action", None)
     
     # Increase turn count
     current_turn_count = state.get("turn_count", 0) + 1
@@ -118,68 +143,88 @@ def analyze_legal_context_node(state: LegalState):
     
     conversation_history = "\n".join([f"{m.type}: {m.content}" for m in messages])
     
+    recent_question_context = ""
+    if asked_facts:
+        recent_question_context = f'''[RECENT QUESTION CONTEXT]
+    The system's most recent question was trying to figure out the key: `{list(asked_facts)[-1]}`.
+    If the user denied knowledge, YOU MUST ADD the key to `extracted_critical_facts` and set its value to "EXPLICITLY_DENIED".'''
+    
     # 1. Extraction & Intent Detection Prompt
     extraction_prompt = f"""
-    You are an expert AI Legal Assistant 'Satta Vizhi'.
-    
+    SYSTEM PROMPT – SATTA VIZHI (FREE VERSION)
+
+    IDENTITY:
+    You are Satta Vizhi, a free Indian legal guidance and complaint drafting assistant.
+    You operate strictly under Indian law.
+    You are NOT a lawyer, advocate, or law firm.
+    You do NOT provide guaranteed legal advice, legal opinions, or legal representation.
+    You provide structured legal information, procedural guidance, and complaint drafting assistance based only on user-provided facts.
+
+    PURPOSE:
+    Your purpose is to:
+    1. Help users understand what type of legal case may apply to their issue.
+    2. Explain available legal options in simple language.
+    3. Suggest procedural next steps.
+    4. Generate properly formatted complaint documents.
+    5. Maintain safety, neutrality, and clarity.
+
+    TARGET USERS:
+    - Indian citizens
+    - People without legal knowledge
+    - First-time complainants
+    - Rural and urban users
+
+    TONE:
+    - Calm, Respectful, Non-intimidating, Clear and simple, Neutral and structured.
+
+    [CORE RULES]
+    1. JURISDICTION RULE: Always confirm State, District, and Date of incident. If missing, ask for it.
+    2. ONE QUESTION RULE: Ask only ONE question at a time. Do not overwhelm the user.
+    3. NO ASSUMPTIONS RULE: Never assume intent, motive, evidence, legal sections, outcome. Only rely on confirmed user facts.
+    4. SAFE LEGAL LANGUAGE RULE: Use cautious phrases ("May fall under", "Is commonly addressed under", "You may consider"). Never say ("You will win", "This guarantees").
+    5. RISK ESCALATION RULE: If the issue involves Serious criminal charges, Arrest risk, Divorce litigation, Large property disputes, Constitutional issues -> Provide only general guidance and recommend consulting a licensed advocate.
+    6. ILLEGAL REQUEST RULE: If user requests False complaint drafting, Fabricating evidence, Framing someone, Tax evasion, etc -> Politely refuse (Set safety_status to "UNSAFE").
+
+    [LEGAL DOMAIN CLASSIFICATION]
+    Classify issues into (if unclear, ask clarification):
+    - Motor Vehicle Accident
+    - Theft / Cheating
+    - Assault
+    - Cybercrime
+    - Property Dispute
+    - Money Recovery
+    - Consumer Complaint
+    - Employment Dispute
+    - Domestic Violence
+    - Defamation
+    - Public Nuisance
+
     [GLOBAL CONSTRAINT]
     You MUST extract only FACTUAL information. 
     You MUST NOT extract legal conclusions, sections, acts, or court jurisdictions.
     
     [CANONICAL FACT DIMENSIONS - NORMALIZATION RULES]
     To eliminate semantic repetition, you MUST map user inputs to these Abstract Canonical Dimensions:
-    
-    1. **Event Dimension**:
-       - Key: `primary_event_overview` (The main thing that happened)
-       - Key: `incident_description` (Detailed description of the event)
-    2. **Party Dimension**:
-       - Key: `counterparty_name` (The person/entity opposing the user)
-       - Key: `counterparty_address` (Address of the other party)
-       - Key: `counterparty_role` (Landlord, Husband, Bank, etc.)
-       - Key: `user_role` (Tenant, Wife, Customer, etc.)
-       - Key: `witness_details` (Names and contacts of witnesses)
-    3. **Personal Dimension**:
-       - Key: `user_full_name` (Name of the user filing the complaint)
-       - Key: `user_address` (User's complete residential address)
-       - Key: `user_phone` (User's contact number)
-    4. **Time Dimension**:
-       - Key: `incident_date` (Date/Time of main event)
-    5. **Place/Context Dimension**:
-       - Key: `incident_location` (Physical or Digital place)
-       - Key: `product_name` (Name/model of product or service)
-       - Key: `defect_description` (Specific defect)
-       - Key: `prior_complaints` (Past actions taken)
-    6. **Impact/Financial Dimension**:
-       - Key: `financial_loss_value` (Monetary impact)
-       - Key: `payment_details` (Payment method details)
-       - Key: `harm_description` (Non-monetary harm)
-       - Key: `stolen_items` (Items stolen)
-    7. **Evidence Dimension**:
-       - Key: `evidence_available` (Documents, receipts, contracts)
+    1. **Jurisdiction & Time**: `state`, `district`, `incident_date` (MANDATORY)
+    2. **Event Dimension**: `primary_event_overview`, `incident_description`
+    3. **Party Dimension**: `counterparty_name`, `counterparty_address`, `counterparty_role`, `user_role`, `witness_details`
+    4. **Personal Dimension**: `user_full_name`, `user_address`, `user_phone`
+    5. **Place/Context Dimension**: `incident_location`, `product_name`, `defect_description`, `prior_complaints`
+    6. **Impact/Financial Dimension**: `financial_loss_value`, `payment_details`, `harm_description`, `stolen_items`
+    7. **Evidence Dimension**: `evidence_available`
 
     [CONSISTENCY & REDUNDANCY CHECK]
-    - **Normalization**: If the user says "My husband hit me" -> extract 'primary_event_overview': "Physical assault per user". 
-    - **Deduplication**: Compare with [CURRENT FACTS]. If 'event_timestamp' is already known, DO NOT include it in 'required_keys_schema'.
-
+    - Dedup: Compare with [CURRENT FACTS].
+    
     [TASK]
     Analyze the conversation history.
+    1. **Identify Intent**: classify into one of the domains listed above.
+    2. **Fact Extraction**: Extract facts using the CANONICAL KEYS above. Ignore fields the user has NOT mentioned.
+    3. **Schema Definition**: Define `required_keys_schema` as a smart, contextual list of keys logically necessary.
+       - ALWAYS include: `state`, `district`, `incident_date`, `incident_description`.
+       - DO NOT badger the user with unnecessary details. Limit to 10 keys total.
     
-    1. **Identify Intent**: specific factual problem.
-    2. **Fact Extraction**: Extract facts using the CANONICAL KEYS above.
-       - IMPORTANT: ONLY extract keys where you have ACTUAL DATA explicitly stated by the user.
-       - If the user has NOT mentioned a topic at all, DO NOT put its key in `extracted_critical_facts`. Just skip the key.
-       - NEVER use "Unknown" or "NOT_AVAILABLE". If the answer is unknown because the user hasn't said it yet, simply omit the key entirely from your output.
-       - NEVER output "EXPLICITLY_DENIED" on your own. You may ONLY output "EXPLICITLY_DENIED" if specifically instructed to do so by the [RECENT QUESTION CONTEXT] section below.
-    3. **Schema Definition**: Define `required_keys_schema` as a smart, contextual list of keys logically necessary to draft a useful legal document for this intent.
-       - ALWAYS include: `user_full_name`, `user_address`, `user_phone`, `incident_date`, `incident_description`.
-       - If there is another party involved, include `counterparty_name`.
-       - ONLY include specific keys (like `product_name`, `stolen_items`, `financial_loss_value`, `evidence_available`, etc.) IF they are directly relevant to the specific problem.
-       - DO NOT ask for irrelevant details. For example, do not ask for `stolen_items` in a rental dispute. Do not ask for `defect_description` in an assault case.
-       - STRICT LIMIT: You MUST output a MAXIMUM of 12 keys total in `required_keys_schema`. Ensure you include enough specific keys to build a robust legal case without badgering the user with unnecessary details.
-    {f'''[RECENT QUESTION CONTEXT]
-    The system's most recent question was trying to figure out the key: `{list(asked_facts)[-1]}`.
-    If the user's latest response is a generic "I don't know", "No", "Not sure", or "None" without extra context, they are explicitly denying knowledge for that specific key.
-    YOU MUST ADD the key `{list(asked_facts)[-1]}` to `extracted_critical_facts` and set its value to exactly "EXPLICITLY_DENIED". DO NOT SKIP IT. This is a critical system requirement.''' if asked_facts else ''}
+    {recent_question_context}
     
     [CURRENT FACTS]
     Critical: {json.dumps(current_critical)}
@@ -188,26 +233,22 @@ def analyze_legal_context_node(state: LegalState):
     [CONVERSATION HISTORY]
     {conversation_history}
     
+    [TIME CONTEXT]
+    The current date and time is: {datetime.now().strftime("%d-%m-%Y %H:%M:%S")}.
+    If the user mentions relative times like "today", "yesterday", "this morning", "last week", calculate and extract the EXACT DATE (DD-MM-YYYY) and include it instead of the relative term. Do not extract just "yesterday" - extract the actual calendar date it corresponds to.
+
     [SAFETY CHECK (CRITICAL)]
-    Analyze if the user input involves:
-    - Immediate danger to life (RIGHT NOW)
-    - Violence / Physical Assault (ongoing or planned RIGHT NOW)
-    - Serious criminal activity (ongoing RIGHT NOW, not past)
+    Check Immediate danger to life or ILLEGAL requests. Set safety_status to "UNSAFE" if found. Otherwise "SAFE".
     
-    OVERRIDE RULE: You MUST classify the input as "SAFE" if the user is asking how to file a complaint, requesting legal help, or talking about a past event. ANY vehicle accident, property damage, or physical injury that ALREADY HAPPENED (e.g. they survived and are asking for advice) is STRICTLY SAFE. Do NOT flag these as UNSAFE. Only flag active, ongoing, immediate 911-level threats.
-
-    If ANY ongoing immediate threats are detected, set "safety_status": "UNSAFE" and "safety_reason": "Reason...".
-    Otherwise, set "safety_status": "SAFE".
-
     [OUTPUT FORMAT]
     Return a VALID JSON object (no markdown):
-    {{
-        "intent": "string",
+    {{{{
+        "intent": "Motor Vehicle Accident / Theft / Cheating / etc.",
         "safety_status": "SAFE" or "UNSAFE",
-        "extracted_critical_facts": {{ "CANONICAL_KEY": "value" }},
-        "extracted_optional_facts": {{ "CANONICAL_KEY": "value" }},
+        "extracted_critical_facts": {{{{ "CANONICAL_KEY": "value" }}}},
+        "extracted_optional_facts": {{{{ "CANONICAL_KEY": "value" }}}},
         "required_keys_schema": ["CANONICAL_KEY_1", "CANONICAL_KEY_2"]
-    }}
+    }}}}
     """
     
     print("DEBUG PROMPT RECENT CONTEXT:", f"Asked facts: {asked_facts}")
@@ -478,11 +519,16 @@ def analyze_legal_context_node(state: LegalState):
                 next_step = "ask_question"
                 last_rejection = current_turn_count
                 
-            # Explicit Approval -> Generate Options
+            # Explicit Approval -> Generate Options or Document
             # STRICT KEYWORD: "CONFIRM"
             elif "CONFIRM" in last_msg:
-                next_step = "ask_action_choice"
-                new_stage = "action_choice"
+                if selected_action:
+                    # User already chose an action, we were just collecting missing details.
+                    next_step = "generate_document"
+                    new_stage = "completed"
+                else:
+                    next_step = "ask_action_choice"
+                    new_stage = "action_choice"
                 
             # Anything else -> Repeat Confirmation Question
             else:
@@ -490,14 +536,35 @@ def analyze_legal_context_node(state: LegalState):
                 
         elif current_stage == "action_choice":
             last_msg = messages[-1].content.strip()
-            if last_msg.startswith("ACTION:"):
+            if last_msg.startswith("ACTION:") or last_msg.startswith("action:"):
                 # User selected an action
-                intent = last_msg.replace("ACTION:", "").strip()
-                next_step = "generate_document"
-                new_stage = "completed"
+                intent = last_msg.replace("ACTION:", "").replace("action:", "").strip()
+                selected_action = intent
+                # Instead of immediate generation, ask for second confirmation according to requirements
+                next_step = "ask_action_confirm"
+                new_stage = "action_confirm"
             else:
                 next_step = "ask_action_choice"
                 new_stage = "action_choice"
+                
+        elif current_stage == "action_confirm":
+            last_msg = messages[-1].content.strip().upper()
+            if "CONFIRM" in last_msg:
+                if len(missing_critical_fields) > 0:
+                    # We don't have enough info for the selected document. Ask for missing details!
+                    next_step = "ask_question"
+                    new_stage = "investigation"
+                else:
+                    next_step = "generate_document"
+                    new_stage = "completed"
+            elif "EDIT" in last_msg or "CHANGE" in last_msg:
+                new_stage = "action_choice"
+                next_step = "ask_action_choice"
+                selected_action = None # Clear it
+            else:
+                next_step = "ask_action_confirm"
+                
+        else:
             # Investigation stage
             # If conflicts exist, we MUST stay in investigation/questioning
             if len(fact_conflicts) > 0:
@@ -505,7 +572,7 @@ def analyze_legal_context_node(state: LegalState):
             # If we haven't asked at least one question (turn 1), forbid confirmation
             elif current_turn_count < 2:
                  next_step = "ask_question"
-            elif readiness_score >= 80:
+            elif readiness_score >= 100:
                 next_step = "ask_confirmation"
                 new_stage = "confirmation"
             else:
@@ -518,6 +585,7 @@ def analyze_legal_context_node(state: LegalState):
             "critical_facts": updated_critical,
             "optional_facts": updated_optional,
             "intent": intent,
+            "selected_action": selected_action,
             "missing_fields": missing_critical_fields,
             "readiness_score": readiness_score,
             "next_step": next_step,
@@ -538,6 +606,51 @@ def analyze_legal_context_node(state: LegalState):
         }
 
 # Node: Generate Question (Structured Interview Approach)
+# Intent-specific mandatory fields — always ask for these regardless of LLM schema
+INTENT_REQUIRED_FIELDS = {
+    "default": ["user_full_name", "state", "district", "incident_date", "incident_description", "incident_location"],
+    "theft": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "incident_location", "incident_description", "stolen_items", "financial_loss_value", "evidence_available"],
+    "cheating": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "counterparty_name", "counterparty_address", "incident_description", "financial_loss_value", "evidence_available"],
+    "consumer": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "counterparty_name", "counterparty_address", "product_name", "defect_description", "financial_loss_value", "evidence_available"],
+    "motor": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "incident_location", "counterparty_name", "incident_description", "harm_description", "financial_loss_value", "evidence_available"],
+    "assault": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "incident_location", "counterparty_name", "counterparty_address", "incident_description", "harm_description", "witness_details", "evidence_available"],
+    "cybercrime": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "incident_description", "financial_loss_value", "evidence_available"],
+    "property": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "counterparty_name", "counterparty_address", "incident_description", "evidence_available"],
+    "employment": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "counterparty_name", "counterparty_address", "incident_description", "financial_loss_value", "evidence_available"],
+    "domestic": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "counterparty_name", "incident_description", "harm_description", "witness_details", "evidence_available"],
+    "defamation": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "counterparty_name", "incident_description", "evidence_available"],
+    "money": ["user_full_name", "user_address", "user_phone", "state", "district", "incident_date", "counterparty_name", "counterparty_address", "incident_description", "financial_loss_value", "payment_details", "evidence_available"],
+}
+
+def _get_intent_required_fields(intent: str) -> list:
+    """Return the minimum required fields for a given intent."""
+    if not intent:
+        return INTENT_REQUIRED_FIELDS["default"]
+    il = intent.lower()
+    if any(t in il for t in ["theft", "stolen", "robbery", "burglary"]):
+        return INTENT_REQUIRED_FIELDS["theft"]
+    elif any(t in il for t in ["cheat", "fraud", "scam"]):
+        return INTENT_REQUIRED_FIELDS["cheating"]
+    elif any(t in il for t in ["consumer", "product", "service", "refund", "defective"]):
+        return INTENT_REQUIRED_FIELDS["consumer"]
+    elif any(t in il for t in ["motor", "accident", "vehicle", "car"]):
+        return INTENT_REQUIRED_FIELDS["motor"]
+    elif any(t in il for t in ["assault", "attack", "hurt", "battery"]):
+        return INTENT_REQUIRED_FIELDS["assault"]
+    elif any(t in il for t in ["cyber", "online", "hack", "phish"]):
+        return INTENT_REQUIRED_FIELDS["cybercrime"]
+    elif any(t in il for t in ["property", "land", "real estate", "trespass"]):
+        return INTENT_REQUIRED_FIELDS["property"]
+    elif any(t in il for t in ["employ", "salary", "wage", "job", "termination"]):
+        return INTENT_REQUIRED_FIELDS["employment"]
+    elif any(t in il for t in ["domestic", "violence", "dowry", "harass"]):
+        return INTENT_REQUIRED_FIELDS["domestic"]
+    elif any(t in il for t in ["defam", "slander", "libel"]):
+        return INTENT_REQUIRED_FIELDS["defamation"]
+    elif any(t in il for t in ["money", "loan", "debt", "recover"]):
+        return INTENT_REQUIRED_FIELDS["money"]
+    return INTENT_REQUIRED_FIELDS["default"]
+
 def generate_question_node(state: LegalState):
     lang = state.get("user_language", "en")
     intent = state.get("intent", "General Legal Issue")
@@ -548,6 +661,18 @@ def generate_question_node(state: LegalState):
     asked_facts = state.get("asked_facts", [])
     answered_facts = state.get("answered_facts", {})
     fact_conflicts = state.get("fact_conflicts", {})
+    
+    # Enforce intent-specific required fields as missing_fields if not already in state
+    state_missing = state.get("missing_fields", [])
+    intent_required = _get_intent_required_fields(intent)
+    # Fields that are needed but not yet answered
+    answered_keys = set(k for k, v in answered_facts.items() if v and str(v).lower() not in ["none", "null", "not_available", "unknown", "explicitly_denied"])
+    intent_missing = [f for f in intent_required if f not in answered_keys]
+    # Merge: use intent_missing if state_missing is empty or smaller
+    if intent_missing and (not state_missing or len(intent_missing) > len(state_missing)):
+        effective_missing = intent_missing
+    else:
+        effective_missing = state_missing
     
     # Safety refusal
     if next_step == "refusal":
@@ -586,6 +711,8 @@ Return ONLY the translated message."""
         
         return {
             "generated_content": confirmation_msg,
+            "next_step": "ask_confirmation",
+            "stage": "confirmation",
             "asked_facts": asked_facts
         }
     
@@ -631,15 +758,36 @@ Return ONLY the translated message."""
             
         return {
             "generated_content": f"ACTION_CHOICES:{content}",
+            "next_step": "ask_action_choice",
+            "stage": "action_choice",
+            "asked_facts": asked_facts
+        }
+        
+    # Action Confirmation stage
+    if next_step == "ask_action_confirm":
+        # The user has selected an action (intent)
+        msg = f"You have selected: **{intent}**.\n\nAre you sure you want to proceed and generate the legal draft for this action?\n• Type CONFIRM to generate the document\n• Type EDIT to go back and choose a different action"
+        
+        # Translate if needed
+        if lang != "en":
+            prompt = f"Translate the following message to {lang}, maintaining the structure and formatting:\n\n{msg}\n\nReturn ONLY the translated message."
+            response = llm.invoke([HumanMessage(content=prompt)])
+            msg = response.content.strip()
+            
+        return {
+            "generated_content": msg,
+            "next_step": "ask_action_confirm",
+            "stage": "action_confirm",
             "asked_facts": asked_facts
         }
     
     # STRUCTURED INTERVIEW - Ask specific questions based on what's missing
-    missing_fields = state.get("missing_fields", [])
+    # Use effective_missing which merges intent-required fields with state-missing fields
+    missing_fields = effective_missing
     
     if missing_fields:
-        # Choose the first missing field that hasn't been asked yet in the recent turn
-        # If all missing fields have been asked, we just pick the first one again to clarify
+        # Choose the first missing field that hasn't been asked yet; 
+        # if all have been asked cycle through to avoid infinite loop
         target_field = missing_fields[0]
         for field in missing_fields:
             if field not in asked_facts:
@@ -652,23 +800,50 @@ Return ONLY the translated message."""
         recent_msgs = messages[-4:] if len(messages) >= 4 else messages
         history_text = "\n".join([f"{'User' if m.type == 'human' else 'Assistant'}: {m.content}" for m in recent_msgs])
         
+        # Human-readable field labels
+        FIELD_LABELS = {
+            "user_full_name": "your full legal name",
+            "user_address": "your complete residential address",
+            "user_phone": "your contact phone number",
+            "state": "the state where the incident occurred",
+            "district": "the district where the incident occurred",
+            "incident_date": "the exact date the incident occurred",
+            "incident_location": "the exact location/address of the incident",
+            "incident_description": "a detailed description of what exactly happened",
+            "counterparty_name": "the full name of the person/company responsible",
+            "counterparty_address": "the address of the person/company responsible",
+            "counterparty_role": "the role or relation of the accused (e.g. seller, employer, neighbor)",
+            "stolen_items": "what exactly was stolen (item description, brand, model)",
+            "financial_loss_value": "the total monetary loss in Indian Rupees (₹)",
+            "payment_details": "details of any payment made (amount, date, mode, reference number)",
+            "harm_description": "description of physical or psychological harm suffered",
+            "product_name": "the name and model of the product/service involved",
+            "defect_description": "description of the defect or service failure",
+            "prior_complaints": "any prior complaints already filed for this issue",
+            "witness_details": "names and contact details of any witnesses",
+            "evidence_available": "what evidence you have (photos, receipts, messages, CCTV etc.)",
+        }
+        human_label = FIELD_LABELS.get(target_field, target_field.replace("_", " "))
+        
         # Ask LLM to generate the next conversational question
         prompt = f"""
-        You are 'Satta Vizhi', an expert empathetic Legal AI Assistant.
+        You are Satta Vizhi, a free Indian legal guidance assistant.
+        Your tone must be calm, respectful, clear, empathetic, and neutral.
         
         [CONTEXT]
         Legal Issue / Intent: {intent}
-        Current Missing Information we need: '{target_field}'
+        We still need to know: '{human_label}' (internal key: {target_field})
         Language to respond in: {lang}
         
         [RECENT CONVERSATION]
         {history_text}
         
         [TASK]
-        1. Formulate exactly ONE natural, conversational follow-up question to ask the user for the specific Missing Information field: '{target_field}'.
-        2. You MUST ONLY ask for information logically related to '{target_field}'. DO NOT invent new things to ask about (e.g. do not ask for date of birth, identification numbers, etc., unless that is the exact target field).
-        3. Keep the question polite, empathetic, and strictly focused on getting '{target_field}'.
-        4. DO NOT explain yourself, DO NOT use markdown, and DO NOT wrap it in quotes.
+        1. ONE QUESTION RULE: Ask exactly ONE natural, warm, conversational question to get '{human_label}'.
+        2. Be specific — explain WHY this information is important for their legal document.
+        3. DO NOT invent other questions. DO NOT ask for anything other than '{human_label}'.
+        4. DO NOT use markdown. DO NOT wrap in quotes.
+        5. If this is a sensitive field (like address or phone), reassure them their info is safe.
         
         Respond ONLY with the exact question text in {lang}.
         """
@@ -681,10 +856,11 @@ Return ONLY the translated message."""
             "asked_facts": asked_facts
         }
     
-    # If no more structured questions, move to confirmation
+    # All required fields answered — move to confirmation
     return {
         "generated_content": "Thank you for providing the information. Let me prepare a summary for your review.",
         "next_step": "ask_confirmation",
+        "stage": "confirmation",
         "asked_facts": asked_facts
     }
 
@@ -716,6 +892,14 @@ def get_question_sequence(intent: str, answered_facts: dict, asked_facts: list) 
         },
         
         # INCIDENT DETAILS (Core information)
+        "state": {
+            "question": "In which state did this incident occur?",
+            "priority": 1
+        },
+        "district": {
+            "question": "In which district did this incident occur?",
+            "priority": 1
+        },
         "incident_date": {
             "question": "When exactly did this incident occur? Please provide the date (and time if relevant).",
             "priority": 1
@@ -949,11 +1133,12 @@ workflow.add_conditional_edges(
     check_next_step,
     {
         "ask_question": "generate_question",
-        "ask_confirmation": "generate_question", 
+        "ask_confirmation": "generate_question",
         "ask_action_choice": "generate_question",
-        "refusal": "generate_question", 
+        "ask_action_confirm": "generate_question",  # ← NEW: second law-choice confirmation
+        "refusal": "generate_question",
         "generate_document": "generate_document",
-        "completed": "generate_document" 
+        "completed": "generate_document"
     }
 )
 
@@ -993,32 +1178,23 @@ import hashlib
 
 def process_message(thread_id: str, user_input: str):
     config = {"configurable": {"thread_id": thread_id}}
-    
+
     # 1. IDEMPOTENCY CHECK
-    # Check if this exact input was just processed to avoid duplicates/refreshes
     current_input_hash = hashlib.md5(user_input.encode()).hexdigest()
-    
     current_state = app.get_state(config).values
     last_processed_hash = current_state.get("last_input_hash", "")
-    
+
     if last_processed_hash == current_input_hash:
         print(f"Idempotency: Skipping duplicate input for thread {thread_id}")
-        # Return existing state without invoking graph
         generated_content = current_state.get("generated_content", "")
         facts = current_state.get("legal_facts", {})
         intent = current_state.get("intent", "")
         score = current_state.get("readiness_score", 0)
         next_step = current_state.get("next_step", "")
-        
-        return {
-            "content": generated_content,
-            "entities": facts,
-            "intent": intent,
-            "readiness_score": score,
-            "is_document": next_step == "generate_document",
-            "is_confirmation": next_step == "ask_confirmation",
-            "is_action_choice": next_step == "ask_action_choice"
-        }
+        stage = current_state.get("stage", "intake")
+        checklist = current_state.get("checklist", {})
+        bilingual_doc = current_state.get("bilingual_document")
+        return _build_response(generated_content, facts, intent, score, next_step, stage, checklist, bilingual_doc)
 
     # 2. INVOKE GRAPH
     app.invoke(
@@ -1028,21 +1204,115 @@ def process_message(thread_id: str, user_input: str):
         },
         config=config
     )
-    
+
     final_state = app.get_state(config).values
-    
     generated_content = final_state.get("generated_content", "")
     facts = final_state.get("legal_facts", {})
     intent = final_state.get("intent", "")
     score = final_state.get("readiness_score", 0)
     next_step = final_state.get("next_step", "")
-    
-    return {
+    stage = final_state.get("stage", "intake")
+    checklist = final_state.get("checklist", {})
+    bilingual_doc = final_state.get("bilingual_document")
+    return _build_response(generated_content, facts, intent, score, next_step, stage, checklist, bilingual_doc)
+
+
+def _build_response(generated_content, facts, intent, score, next_step, stage, checklist, bilingual_doc):
+    """Build the standardized API response for Stage 1-9 workflow."""
+    readiness_status = "NOT_READY"
+    if score >= 100:
+        readiness_status = "LEGALLY_READY"
+    elif score >= 80:
+        readiness_status = "NEARLY_READY"
+    elif score >= 50:
+        readiness_status = "PARTIALLY_READY"
+
+    suggested_sections = _get_suggested_sections(intent)
+    filing_guidance = _get_filing_guidance(intent, facts)
+
+    response = {
         "content": generated_content,
         "entities": facts,
         "intent": intent,
         "readiness_score": score,
-        "is_document": next_step == "generate_document",
+        "readiness_status": readiness_status,
+        "is_document": next_step in ["generate_document", "completed"] or stage == "completed",
         "is_confirmation": next_step == "ask_confirmation",
-        "is_action_choice": next_step == "ask_action_choice"
+        "is_action_choice": next_step == "ask_action_choice",
+        "current_stage": stage,
+        "checklist": checklist,
+        "suggested_sections": suggested_sections,
+        "filing_guidance": filing_guidance
     }
+
+    if bilingual_doc:
+        response["bilingual_document"] = bilingual_doc
+
+    return response
+
+
+def _get_suggested_sections(intent: str) -> str:
+    """Return relevant Indian legal sections based on detected intent."""
+    if not intent or intent == "SAFETY_REFUSAL":
+        return ""
+    intent_lower = intent.lower()
+    sections = []
+    if any(t in intent_lower for t in ["theft", "stolen", "robbery", "burglary"]):
+        sections = ["Section 378 IPC (Theft)", "Section 379 IPC (Punishment)", "Section 380 IPC (Theft in dwelling)"]
+    elif any(t in intent_lower for t in ["cheating", "fraud"]):
+        sections = ["Section 415 IPC (Cheating)", "Section 420 IPC (Inducing dishonestly)", "Section 406 IPC (Criminal breach of trust)"]
+    elif any(t in intent_lower for t in ["assault", "attack", "hurt"]):
+        sections = ["Section 319 IPC (Hurt)", "Section 320 IPC (Grievous hurt)", "Section 323 IPC (Voluntarily causing hurt)"]
+    elif any(t in intent_lower for t in ["consumer", "product", "service", "refund", "defective"]):
+        sections = ["Consumer Protection Act 2019 – Section 2(7)", "Consumer Protection Act 2019 – Section 35", "Section 420 IPC (Cheating)"]
+    elif any(t in intent_lower for t in ["cybercrime", "online", "hacking", "phishing"]):
+        sections = ["IT Act 2000 – Section 66 (Computer related offences)", "IT Act 2000 – Section 66C (Identity theft)", "IT Act 2000 – Section 66D (Cheating by personation)"]
+    elif any(t in intent_lower for t in ["property", "land", "real estate"]):
+        sections = ["Transfer of Property Act 1882", "Section 420 IPC (Cheating)", "Section 447 IPC (Criminal trespass)"]
+    elif any(t in intent_lower for t in ["domestic", "violence", "dowry"]):
+        sections = ["Protection of Women from Domestic Violence Act 2005", "Section 498A IPC (Cruelty by husband)", "Section 304B IPC (Dowry death)"]
+    elif any(t in intent_lower for t in ["motor", "accident", "vehicle"]):
+        sections = ["Motor Vehicles Act 1988 – Section 166", "Section 304A IPC (Death by negligence)"]
+    elif any(t in intent_lower for t in ["employment", "salary", "wages"]):
+        sections = ["Payment of Wages Act 1936", "Industrial Disputes Act 1947", "Minimum Wages Act 1948"]
+    elif any(t in intent_lower for t in ["defamation", "slander"]):
+        sections = ["Section 499 IPC (Defamation)", "Section 500 IPC (Punishment for defamation)"]
+    if sections:
+        return " | ".join(sections[:3])
+    return ""
+
+
+def _get_filing_guidance(intent: str, facts: dict) -> dict:
+    """Return filing authority, enclosures, and next steps based on intent."""
+    if not intent:
+        return {}
+    intent_lower = intent.lower()
+    state = facts.get("state", "your state")
+    district = facts.get("district", "your district")
+    guidance = {
+        "authority": "",
+        "jurisdiction_hint": f"{district}, {state}",
+        "enclosures": [],
+        "next_steps": []
+    }
+    if any(t in intent_lower for t in ["theft", "assault", "robbery", "cheating", "cybercrime"]):
+        guidance["authority"] = f"Police Station, {district} (Cyber Crime Cell for online offences)"
+        guidance["enclosures"] = ["Government ID proof", "Evidence documents", "Witness details", "FIR draft"]
+        guidance["next_steps"] = ["Visit nearest police station", "File an FIR", "Collect FIR receipt", "Contact a lawyer if FIR refused"]
+    elif any(t in intent_lower for t in ["consumer", "product", "service", "refund"]):
+        guidance["authority"] = f"District Consumer Disputes Redressal Commission, {district}"
+        guidance["enclosures"] = ["Original bills/receipts", "Product photos", "Warranty card", "Communication with seller", "ID proof"]
+        guidance["next_steps"] = ["File complaint at Consumer Commission", "Attach all bills and evidence", "Pay nominal court fee", "Attend hearing"]
+    elif any(t in intent_lower for t in ["motor", "accident", "vehicle"]):
+        guidance["authority"] = f"Motor Accident Claims Tribunal (MACT), {district}"
+        guidance["enclosures"] = ["FIR copy", "Medical reports", "Vehicle documents", "Insurance papers"]
+        guidance["next_steps"] = ["File FIR at police station", "Get medical certificate", "Contact insurance company", "File MACT claim within 2 years"]
+    elif any(t in intent_lower for t in ["domestic", "violence", "dowry"]):
+        guidance["authority"] = f"Protection Officer / Magistrate Court, {district}"
+        guidance["enclosures"] = ["ID proof", "Marriage certificate", "Medical reports", "Evidence"]
+        guidance["next_steps"] = ["Contact Protection Officer under PWDVA", "File complaint at Magistrate Court", "Seek immediate protection order", "Contact legal aid services"]
+    else:
+        guidance["authority"] = f"Civil Court / Magistrate Court, {district}"
+        guidance["enclosures"] = ["All relevant documents", "ID proof", "Evidence"]
+        guidance["next_steps"] = ["Consult a local lawyer", "Draft legal notice", "File complaint at appropriate authority"]
+    return guidance

@@ -27,6 +27,20 @@ public class CaseController {
             CaseResponse response = caseService.createCase(request, phoneNumber);
             return ResponseEntity.ok(response);
         } catch (RuntimeException e) {
+            e.printStackTrace();
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    @PutMapping("/{caseId}")
+    public ResponseEntity<CaseResponse> updateCase(@PathVariable("caseId") Long caseId,
+            @RequestBody CreateCaseRequest request) {
+        try {
+            String phoneNumber = getCurrentUserPhoneNumber();
+            CaseResponse response = caseService.updateCase(caseId, request, phoneNumber);
+            return ResponseEntity.ok(response);
+        } catch (RuntimeException e) {
+            e.printStackTrace();
             return ResponseEntity.badRequest().build();
         }
     }

@@ -77,6 +77,15 @@ public class SessionController {
         return ResponseEntity.ok(sessionService.getSessionStatus(sessionId, phoneNumber));
     }
 
+    @GetMapping("/{sessionId}/history")
+    public ResponseEntity<java.util.List<java.util.Map<String, Object>>> getSessionHistory(
+            @RequestHeader("Authorization") String token,
+            @PathVariable("sessionId") String sessionId) {
+
+        String phoneNumber = getPhoneNumberFromToken(token);
+        return ResponseEntity.ok(sessionService.getSessionHistory(sessionId, phoneNumber));
+    }
+
     private String getPhoneNumberFromToken(String token) {
         if (token != null && token.startsWith("Bearer ")) {
             token = token.substring(7);
