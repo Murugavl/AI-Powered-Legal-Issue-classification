@@ -10,43 +10,81 @@ import './CaseWizard.css';
 ───────────────────────────────────────────── */
 
 const KEY_LABELS = {
-    user_full_name:        'Complainant Name',
-    user_address:          'Address',
-    user_city_state:       'City / State',
-    user_phone:            'Phone Number',
-    user_email:            'Email',
-    incident_date:         'Date of Incident',
-    incident_location:     'Location',
-    incident_description:  'Description',
-    counterparty_name:     'Other Party Name',
-    counterparty_upi_or_id:'UPI ID / Account',
+    user_full_name: 'Complainant Name',
+    user_address: 'Address',
+    user_city_state: 'City / State',
+    user_phone: 'Phone Number',
+    user_email: 'Email',
+    incident_date: 'Date of Incident',
+    incident_date_time: 'Date & Time of Incident',
+    incident_location: 'Location',
+    incident_description: 'Description',
+    counterparty_name: 'Other Party Name',
+    counterparty_upi_or_id: 'UPI ID / Account',
     counterparty_platform: 'Platform / Channel',
-    counterparty_role:     'Other Party Role',
-    counterparty_address:  'Other Party Address',
-    financial_loss_value:  'Amount Involved',
-    payment_method:        'Payment Method',
-    payment_date:          'Payment Date',
-    payment_reference:     'Payment Reference',
-    evidence_available:    'Evidence Available',
-    product_name:          'Product / Service',
-    defect_description:    'Defect / Problem',
-    stolen_items:          'Stolen / Missing Items',
-    witness_details:       'Witnesses',
-    harm_description:      'Impact / Harm',
-    prior_complaints:      'Previous Actions Taken',
-    rti_department:        'Government Department',
-    information_sought:    'Information Requested',
-    property_address:      'Property Address',
-    rent_amount:           'Monthly Rent',
-    deposit_amount:        'Security Deposit',
+    counterparty_role: 'Other Party Role',
+    counterparty_address: 'Other Party Address',
+    financial_loss_value: 'Amount Involved',
+    payment_method: 'Payment Method',
+    payment_date: 'Payment Date',
+    payment_reference: 'Payment Reference',
+    evidence_available: 'Evidence Available',
+    product_name: 'Product / Service',
+    defect_description: 'Defect / Problem',
+    stolen_items: 'Stolen / Missing Items',
+    witness_details: 'Witnesses',
+    harm_description: 'Impact / Harm',
+    prior_complaints: 'Previous Actions Taken',
+    rti_department: 'Government Department',
+    information_sought: 'Information Requested',
+    property_address: 'Property Address',
+    rent_amount: 'Monthly Rent',
+    deposit_amount: 'Security Deposit',
 };
 
 const labelFor = (key) =>
     KEY_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
-/* Skip "Not available" values in the sidebar / summary */
 const isRealValue = (v) =>
-    v && !['not available', 'not applicable', 'null', 'unknown', ''].includes(String(v).toLowerCase().trim());
+    v && !['not available', 'not applicable', 'null', 'unknown', ''].includes(
+        String(v).toLowerCase().trim()
+    );
+
+/* ─────────────────────────────────────────────
+   MessageBubble — renders \n as proper line breaks
+───────────────────────────────────────────── */
+function MessageBubble({ msg }) {
+    // Split on newlines so they render as visual line breaks
+    const lines = String(msg.text).split('\n');
+
+    return (
+        <div className={`message ${msg.sender}`}>
+            {lines.map((line, i) => (
+                <span key={i}>
+                    {line}
+                    {i < lines.length - 1 && <br />}
+                </span>
+            ))}
+        </div>
+    );
+}
+
+/* ─────────────────────────────────────────────
+   NextSteps — shown inline after document ready
+───────────────────────────────────────────── */
+function NextStepsMessage({ steps }) {
+    if (!steps || steps.length === 0) return null;
+    return (
+        <div className="message system next-steps-message">
+            <div className="next-steps-title">What to do next:</div>
+            <ol className="next-steps-list">
+                {steps.map((step, i) => (
+                    <li key={i}>{step}</li>
+                ))}
+            </ol>
+        </div>
+    );
+}
 
 /* ─────────────────────────────────────────────
    Component
@@ -58,70 +96,92 @@ function CaseWizard() {
     const [messages, setMessages] = useState([{
         id: 'greeting',
         sender: 'system',
-        text: 'Vanakkam! I am Satta Vizhi, your legal document assistant. I am not a lawyer and I do not give legal advice — I only help you prepare documents. Please describe your legal issue in your own words.'
+        text: 'Vanakkam! I am your AI Legal Document Assistant. I am not a lawyer and I do not give legal advice — I only help you prepare documents.\n\nPlease describe your legal issue in your own words.',
     }]);
 
-    const [inputText,       setInputText]       = useState('');
-    const [sessionId,       setSessionId]       = useState(null);
-    const [loading,         setLoading]         = useState(false);
-    const [entities,        setEntities]        = useState({});
-    const [latestData,      setLatestData]      = useState(null);  // last API response
-    const [isComplete,      setIsComplete]      = useState(false); // document is ready
-    const [isConfirmation,  setIsConfirmation]  = useState(false); // show summary modal
-    const [documentPayload, setDocumentPayload] = useState(null);  // parsed JSON from Python
-    const [isUploading,     setIsUploading]     = useState(false);
+    const [inputText, setInputText] = useState('');
+    const [sessionId, setSessionId] = useState(null);
+    const [loading, setLoading] = useState(false);
+    const [entities, setEntities] = useState({});
+    const [latestData, setLatestData] = useState(null);
+    const [isComplete, setIsComplete] = useState(false);
+    const [documentPayload, setDocumentPayload] = useState(null);
+    const [nextSteps, setNextSteps] = useState([]);
+    const [isUploading, setIsUploading] = useState(false);
 
     const messagesEndRef = useRef(null);
     useEffect(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [messages]);
 
-    // Redirect if not logged in
     useEffect(() => {
         if (!localStorage.getItem('token')) {
-            alert('Please log in to use Satta Vizhi.');
+            alert('Please log in to continue.');
             navigate('/login');
         }
     }, [navigate]);
 
-    /* ── apply an API response to state ── */
+    /* ── apply an API response to state ────────────────────── */
     const applyResponse = (data) => {
         setLatestData(data);
         setEntities(data.extractedEntities || {});
 
         if (data.complete && data.documentPayload) {
-            // Document is ready — parse the JSON payload from Python
+            // Document ready
             try {
                 const parsed = JSON.parse(data.documentPayload);
                 setDocumentPayload(parsed);
+
+                // Store next steps
+                const steps = parsed.next_steps || data.nextSteps || [];
+                setNextSteps(steps);
             } catch {
                 setDocumentPayload({ raw: data.documentPayload });
             }
             setIsComplete(true);
-            setIsConfirmation(false);
-            addSystemMessage(data.message || 'Your legal document is ready. You can preview and download it below.');
 
-        } else if (data.confirmation || data.isConfirmation) {
-            // Show summary modal for user to confirm
-            setIsConfirmation(true);
-            // Also show the confirmation message in chat so the user can read it
-            addSystemMessage(data.message || 'Please review the information below and confirm.');
+            // Show document-ready message inline
+            addSystemMessage(
+                data.message ||
+                'Your legal document has been prepared. You can preview and download it below.'
+            );
+
+            // Show next steps inline as a follow-up message (like GPT does)
+            const steps = (() => {
+                try {
+                    const p = JSON.parse(data.documentPayload);
+                    return p.next_steps || data.nextSteps || [];
+                } catch { return data.nextSteps || []; }
+            })();
+            if (steps && steps.length > 0) {
+                setNextSteps(steps);
+                addNextStepsMessage(steps);
+            }
 
         } else if (data.message) {
-            // Normal question / acknowledgment
-            setIsConfirmation(false);
+            // Normal question, acknowledgment, or confirmation summary — all go inline in chat
             addSystemMessage(data.message);
         }
     };
 
     const addSystemMessage = (text) => {
-        setMessages(prev => [...prev, { id: Date.now() + Math.random(), sender: 'system', text }]);
+        setMessages(prev => [
+            ...prev,
+            { id: Date.now() + Math.random(), sender: 'system', text, type: 'normal' }
+        ]);
     };
 
-    /* ── send a text message ── */
+    const addNextStepsMessage = (steps) => {
+        setMessages(prev => [
+            ...prev,
+            { id: Date.now() + Math.random(), sender: 'system', text: '', type: 'next_steps', steps }
+        ]);
+    };
+
+    /* ── send text ──────────────────────────────────────────── */
     const handleSend = async () => {
         const text = inputText.trim();
-        if (!text) return;
+        if (!text || loading) return;
 
-        setMessages(prev => [...prev, { id: Date.now(), sender: 'user', text }]);
+        setMessages(prev => [...prev, { id: Date.now(), sender: 'user', text, type: 'normal' }]);
         setInputText('');
         setLoading(true);
 
@@ -146,57 +206,20 @@ function CaseWizard() {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
     };
 
-    /* ── user clicks "Yes, I Confirm" in the summary modal ── */
-    const handleConfirmSummary = async () => {
-        setIsConfirmation(false);
-        setMessages(prev => [...prev, { id: Date.now(), sender: 'user', text: 'Yes, the above information is correct.' }]);
-        setLoading(true);
-
-        try {
-            const response = await sessionAPI.answer(sessionId, 'Yes, the above information is correct.');
-            applyResponse(response.data);
-        } catch (err) {
-            console.error(err);
-            addSystemMessage("An error occurred during confirmation. Please try again.");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    /* ── user clicks "Cancel & Keep Editing" ── */
-    const handleCancelConfirmation = async () => {
-        setIsConfirmation(false);
-        setMessages(prev => [...prev, { id: Date.now(), sender: 'user', text: 'No, I want to make changes.' }]);
-        setLoading(true);
-
-        try {
-            const response = await sessionAPI.answer(sessionId, 'No, I want to make changes.');
-            applyResponse(response.data);
-        } catch (err) {
-            console.error(err);
-            addSystemMessage("Please tell me what you would like to change.");
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    /* ── generate + download the bilingual PDF ── */
+    /* ── generate + download PDF ────────────────────────────── */
     const generateDocument = async () => {
         if (!documentPayload) {
             alert('No document data available. Please complete the interview first.');
             return;
         }
-
         try {
             setLoading(true);
             const response = await documentAPI.generateBilingual(documentPayload);
             const blob = new Blob([response.data], { type: 'application/pdf' });
-            const url  = window.URL.createObjectURL(blob);
-            const a    = document.createElement('a');
-            a.href     = url;
-
-            const docType = documentPayload.document_type || 'legal_document';
-            a.download = `SattaVizhi_${docType}.pdf`;
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `LegalDocument_${documentPayload.document_type || 'document'}.pdf`;
             a.click();
             window.URL.revokeObjectURL(url);
         } catch (err) {
@@ -207,7 +230,7 @@ function CaseWizard() {
         }
     };
 
-    /* ── evidence file upload ── */
+    /* ── file upload ────────────────────────────────────────── */
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file || !sessionId) return;
@@ -217,13 +240,9 @@ function CaseWizard() {
         formData.append('file', file);
 
         try {
-            const response = await fetch(`http://localhost:8080/api/session/${sessionId}/evidence`, {
-                method: 'POST',
-                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-                body: formData,
-            });
-            const data = await response.json();
-            applyResponse(data);
+            // Use central axios instance — picks up auth token + env base URL automatically
+            const response = await sessionAPI.uploadEvidence(sessionId, formData);
+            applyResponse(response.data);
         } catch (err) {
             console.error('Upload failed', err);
             addSystemMessage('File upload failed. Please try again.');
@@ -232,7 +251,7 @@ function CaseWizard() {
         }
     };
 
-    /* ── voice input ── */
+    /* ── voice input ────────────────────────────────────────── */
     const handleVoiceInput = async (audioFile) => {
         setLoading(true);
         addSystemMessage('🎤 Processing voice input...');
@@ -251,7 +270,6 @@ function CaseWizard() {
             }
 
             const response = await sessionAPI.answerVoice(sid, formData);
-            // Remove the "processing" message
             setMessages(prev => prev.filter(m => m.text !== '🎤 Processing voice input...'));
             applyResponse(response.data);
         } catch (err) {
@@ -262,10 +280,10 @@ function CaseWizard() {
         }
     };
 
-    /* ── delete session ── */
+    /* ── delete session ─────────────────────────────────────── */
     const handleDeleteCase = async () => {
         if (!sessionId) return;
-        if (!window.confirm('Are you sure you want to permanently delete this session? This cannot be undone.')) return;
+        if (!window.confirm('Delete this session permanently? This cannot be undone.')) return;
 
         try {
             await sessionAPI.delete(sessionId);
@@ -277,7 +295,6 @@ function CaseWizard() {
         }
     };
 
-    /* ── real entity entries for display ── */
     const realEntities = Object.entries(entities).filter(([, v]) => isRealValue(v));
 
     /* ─────────────────────────────────────────────
@@ -288,7 +305,8 @@ function CaseWizard() {
 
             {/* Header */}
             <div className="wizard-header">
-                <h1>Satta Vizhi — Legal Assistant</h1>
+                <h1>AI Legal Document Assistant</h1>
+                <p className="wizard-subhead">Not a lawyer · India only · Documents for informational purposes</p>
                 <div style={{ position: 'absolute', right: '2rem', top: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
                     {sessionId && (
                         <button
@@ -304,38 +322,57 @@ function CaseWizard() {
             {/* Main layout */}
             <div className="chat-window">
 
-                {/* ── Messages ── */}
+                {/* Messages */}
                 <div className="messages-area">
                     {messages.map(msg => (
-                        <div key={msg.id} className={`message ${msg.sender}`}>
-                            {msg.text}
-                        </div>
+                        msg.type === 'next_steps'
+                            ? <NextStepsMessage key={msg.id} steps={msg.steps} />
+                            : <MessageBubble key={msg.id} msg={msg} />
                     ))}
+
+                    {/* Typing indicator */}
                     {loading && (
                         <div className="typing-indicator">
-                            <span>Satta Vizhi is typing…</span>
+                            <span className="dot" /><span className="dot" /><span className="dot" />
                         </div>
                     )}
+
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* ── Input / Complete area ── */}
+                {/* Input area / complete area */}
                 {isComplete ? (
-                    <div className="input-area" style={{ justifyContent: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                    <div className="input-area complete-actions">
                         <button className="btn btn-primary" onClick={generateDocument} disabled={loading}>
                             📄 Download Bilingual PDF
                         </button>
                         <button
                             className="btn btn-secondary"
-                            onClick={() => navigate('/dashboard')}
-                            style={{ background: 'rgba(255,255,255,0.1)', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', borderRadius: '8px', padding: '0.6rem 1.2rem', cursor: 'pointer' }}>
+                            onClick={() => navigate('/dashboard')}>
                             Go to Dashboard
+                        </button>
+                        <button
+                            className="btn btn-ghost"
+                            onClick={() => {
+                                setMessages([{
+                                    id: 'greeting',
+                                    sender: 'system',
+                                    text: 'Starting a new case. Please describe your legal issue in your own words.',
+                                }]);
+                                setSessionId(null);
+                                setIsComplete(false);
+                                setDocumentPayload(null);
+                                setNextSteps([]);
+                                setEntities({});
+                                setLatestData(null);
+                                setInputText('');
+                            }}>
+                            ➕ Start New Case
                         </button>
                     </div>
                 ) : (
                     <div className="input-area">
-                        {/* Evidence upload */}
-                        <label title="Upload evidence file" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', color: 'var(--text-muted)', fontSize: '1.2rem' }}>
+                        <label title="Upload evidence file" className="attach-btn">
                             📎
                             <input type="file" hidden onChange={handleFileUpload} disabled={!sessionId || isUploading} />
                         </label>
@@ -351,14 +388,18 @@ function CaseWizard() {
                             onKeyPress={handleKeyPress}
                             disabled={loading}
                         />
-                        <button className="btn-send" onClick={handleSend} disabled={loading || !inputText.trim()}>
+                        <button
+                            className="btn-send"
+                            onClick={handleSend}
+                            disabled={loading || !inputText.trim()}
+                            aria-label="Send">
                             ➜
                         </button>
                     </div>
                 )}
             </div>
 
-            {/* ── Sidebar: Discovered Facts ── */}
+            {/* Sidebar: Discovered Facts */}
             {realEntities.length > 0 && (
                 <div className="entities-panel">
                     <div className="entities-title">Discovered Facts</div>
@@ -371,67 +412,29 @@ function CaseWizard() {
                         ))}
                     </div>
 
-                    {/* Readiness score */}
+                    {/* Evidence readiness */}
                     {latestData?.readinessScore !== undefined && (
                         <div style={{ marginTop: '1.5rem' }}>
                             <div className="entities-title">Evidence Readiness</div>
-                            <div style={{ background: '#334155', borderRadius: '10px', height: '20px', overflow: 'hidden' }}>
-                                <div style={{
+                            <div className="readiness-bar-bg">
+                                <div className="readiness-bar-fill" style={{
                                     width: `${latestData.readinessScore}%`,
-                                    background: latestData.readinessScore >= 75 ? '#22c55e' : latestData.readinessScore >= 40 ? '#eab308' : '#ef4444',
-                                    height: '100%',
-                                    transition: 'width 0.5s ease-in-out'
+                                    background: latestData.readinessScore >= 75 ? '#22c55e'
+                                        : latestData.readinessScore >= 40 ? '#eab308'
+                                            : '#ef4444',
                                 }} />
                             </div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '0.4rem', fontSize: '0.85rem' }}>
+                            <div className="readiness-label-row">
                                 <strong>{latestData.readinessScore}/100</strong>
-                                <span style={{ color: 'var(--text-muted)' }}>
-                                    {latestData.readinessScore >= 75 ? '✅ Strong evidence' :
-                                     latestData.readinessScore >= 50 ? '🟡 Good — add more if possible' :
-                                     latestData.readinessScore >= 25 ? '⚠️ Some evidence present' :
-                                     '❌ Very limited evidence'}
+                                <span>
+                                    {latestData.readinessScore >= 75 ? '✅ Strong evidence'
+                                        : latestData.readinessScore >= 50 ? '🟡 Good — add more if possible'
+                                            : latestData.readinessScore >= 25 ? '⚠️ Some evidence present'
+                                                : '❌ Very limited evidence'}
                                 </span>
                             </div>
                         </div>
                     )}
-                </div>
-            )}
-
-            {/* ── Confirmation Modal ── */}
-            {isConfirmation && (
-                <div className="modal-overlay" style={{
-                    position: 'fixed', inset: 0, backgroundColor: 'rgba(15,23,42,0.85)',
-                    display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000
-                }}>
-                    <div className="modal-content" style={{
-                        background: 'var(--card-bg)', padding: '2rem', borderRadius: '12px',
-                        minWidth: '380px', maxWidth: '580px', width: '90%', maxHeight: '85vh', overflowY: 'auto',
-                        border: '1px solid var(--glass-border)', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.6)'
-                    }}>
-                        <h2 style={{ marginBottom: '1.2rem', color: 'var(--text-primary)' }}>Information Summary</h2>
-                        <p style={{ color: 'var(--text-muted)', marginBottom: '1.2rem', fontSize: '0.9rem' }}>
-                            Please review the information I have collected. If everything is correct, click "Yes, I Confirm" to generate your document.
-                        </p>
-
-                        <ul style={{ listStyle: 'none', padding: 0, marginBottom: '1.5rem' }}>
-                            {realEntities.map(([key, value]) => (
-                                <li key={key} style={{ padding: '0.7rem 0.8rem', background: 'var(--app-bg)', marginBottom: '0.4rem', borderRadius: '6px' }}>
-                                    <strong style={{ color: 'var(--primary-color)' }}>{labelFor(key)}:</strong>{' '}
-                                    <span style={{ color: 'var(--text-primary)' }}>{value}</span>
-                                </li>
-                            ))}
-                        </ul>
-
-                        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
-                            <button className="btn btn-secondary" onClick={handleCancelConfirmation}
-                                style={{ background: 'transparent', border: '1px solid var(--glass-border)', color: 'var(--text-primary)', borderRadius: '8px', padding: '0.6rem 1.2rem', cursor: 'pointer' }}>
-                                Cancel &amp; Keep Editing
-                            </button>
-                            <button className="btn btn-primary" onClick={handleConfirmSummary}>
-                                Yes, I Confirm
-                            </button>
-                        </div>
-                    </div>
                 </div>
             )}
         </div>

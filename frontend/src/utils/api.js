@@ -47,17 +47,21 @@ export const caseAPI = {
 
 // Session API
 export const sessionAPI = {
-  start:       (initialText, language = 'en') =>
-                 api.post('/session/start', { initialText, language }),
-  answer:      (sessionId, answerText) =>
-                 api.post(`/session/${sessionId}/answer`, { answerText }),
-  answerVoice: (sessionId, formData) =>
-                 api.post(`/session/${sessionId}/answer-voice`, formData, {
-                   headers: { 'Content-Type': 'multipart/form-data' },
-                 }),
-  getStatus:   (sessionId) => api.get(`/session/${sessionId}`),
-  getSessions: ()           => api.get('/session'),
-  delete:      (sessionId) => api.delete(`/session/${sessionId}`),
+  start:          (initialText, language = 'en') =>
+                    api.post('/session/start', { initialText, language }),
+  answer:         (sessionId, answerText) =>
+                    api.post(`/session/${sessionId}/answer`, { answerText }),
+  answerVoice:    (sessionId, formData) =>
+                    api.post(`/session/${sessionId}/answer-voice`, formData, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    }),
+  uploadEvidence: (sessionId, formData) =>
+                    api.post(`/session/${sessionId}/evidence`, formData, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    }),
+  getStatus:      (sessionId) => api.get(`/session/${sessionId}`),
+  getSessions:    ()           => api.get('/session'),
+  delete:         (sessionId) => api.delete(`/session/${sessionId}`),
 };
 
 // Document API — generateBilingual posts the payload and gets back a PDF blob

@@ -20,6 +20,7 @@
     margin-bottom: 0.5rem;
     background: linear-gradient(to right, var(--text-main), var(--primary));
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
 }
 
@@ -137,13 +138,45 @@
 
 .typing-indicator {
     display: flex;
-    gap: 4px;
-    padding: 0.5rem 1rem;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: 12px;
+    gap: 6px;
+    padding: 0.75rem 1.2rem;
+    background: var(--msg-sys-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 18px;
+    border-bottom-left-radius: 4px;
     align-self: flex-start;
-    font-size: 0.8rem;
-    color: var(--text-muted);
+    align-items: center;
+}
+
+.typing-indicator .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    animation: bounce 1.2s infinite;
+}
+
+.typing-indicator .dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.typing-indicator .dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+
+    0%,
+    60%,
+    100% {
+        transform: translateY(0);
+        opacity: 0.5;
+    }
+
+    30% {
+        transform: translateY(-6px);
+        opacity: 1;
+    }
 }
 
 .entities-panel {
@@ -182,4 +215,104 @@
 
 .data-tag strong {
     color: var(--text-main);
+}
+
+/* ── Next steps inline message ── */
+.next-steps-message {
+    max-width: 80%;
+    background: var(--msg-sys-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 18px;
+    border-bottom-left-radius: 4px;
+    padding: 1rem 1.5rem;
+}
+
+.next-steps-title {
+    font-weight: 700;
+    margin-bottom: 0.6rem;
+    color: var(--primary-color, #3b82f6);
+    font-size: 0.95rem;
+}
+
+.next-steps-list {
+    margin: 0;
+    padding-left: 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    color: var(--text-main);
+    font-size: 0.95rem;
+    line-height: 1.5;
+}
+
+/* ── Complete actions row ── */
+.complete-actions {
+    justify-content: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+/* ── Ghost button (Start New Case) ── */
+.btn-ghost {
+    background: transparent;
+    border: 1px solid var(--glass-border);
+    color: var(--text-muted);
+    border-radius: 8px;
+    padding: 0.6rem 1.2rem;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: all 0.2s;
+}
+
+.btn-ghost:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-glow, rgba(37, 99, 235, 0.08));
+}
+
+
+/* ── Readiness bar ── */
+.readiness-bar-bg {
+    background: #334155;
+    border-radius: 10px;
+    height: 20px;
+    overflow: hidden;
+}
+
+.readiness-bar-fill {
+    height: 100%;
+    transition: width 0.5s ease-in-out;
+}
+
+.readiness-label-row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.4rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.readiness-label-row strong {
+    color: var(--text-main);
+}
+
+/* ── Attach button ── */
+.attach-btn {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    color: var(--text-muted);
+    font-size: 1.2rem;
+    transition: color 0.2s;
+}
+
+.attach-btn:hover {
+    color: var(--primary-color, #3b82f6);
+}
+
+/* ── Wizard subheading ── */
+.wizard-subhead {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
 }

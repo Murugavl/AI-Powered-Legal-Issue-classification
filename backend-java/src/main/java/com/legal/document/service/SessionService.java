@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -252,6 +253,27 @@ public class SessionService {
                 response.setReadinessScore(((Number) scoreObj).intValue());
             }
         }
+
+        // Practical next steps (only present on document completion)
+        try {
+            @SuppressWarnings("unchecked")
+            List<String> nextSteps = (List<String>) agentResponse.get("next_steps");
+            if (nextSteps != null && !nextSteps.isEmpty()) {
+                response.setNextSteps(nextSteps);
+            } else if (Boolean.TRUE.equals(isDoc)) {
+                // Also try reading from the document payload
+                String docPayload = response.getDocumentPayload();
+                if (docPayload != null) {
+                    com.fasterxml.jackson.databind.ObjectMapper m2 = new com.fasterxml.jackson.databind.ObjectMapper();
+                    com.fasterxml.jackson.databind.JsonNode n2 = m2.readTree(docPayload);
+                    if (n2.has("next_steps")) {
+                        List<String> ns = new ArrayList<>();
+                        n2.get("next_steps").forEach(node -> ns.add(node.asText()));
+                        response.setNextSteps(ns);
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
 
         // Intent
         String intent = (String) agentResponse.get("intent");

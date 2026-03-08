@@ -1,5 +1,6 @@
 package com.legal.document.dto;
 
+import java.util.List;
 import java.util.Map;
 
 public class SessionResponse {
@@ -12,6 +13,7 @@ public class SessionResponse {
     private boolean isConfirmation;  // true when showing summary for user to confirm
     private Integer readinessScore;
     private String documentPayload;  // JSON string of bilingual document (when isComplete=true)
+    private List<String> nextSteps;   // practical next steps after document generation
 
     public SessionResponse() {}
 
@@ -41,4 +43,7 @@ public class SessionResponse {
 
     public String getDocumentPayload()                        { return documentPayload; }
     public void   setDocumentPayload(String v)                { this.documentPayload = v; }
+
+    public List<String> getNextSteps()                        { return nextSteps; }
+    public void         setNextSteps(List<String> v)          { this.nextSteps = v; }
 }
