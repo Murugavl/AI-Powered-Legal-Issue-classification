@@ -69,7 +69,8 @@ public class SessionService {
     // ----------------------------------------------------------------
     @Transactional
     public SessionResponse submitVoiceAnswer(String sessionId, MultipartFile audioFile,
-                                              String transcript, String language, String phoneNumber) {
+                                              String transcript, String language,
+                                              boolean transcriptConfirmed, String phoneNumber) {
         User user = userRepository.findByPhoneNumber(phoneNumber)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
@@ -80,8 +81,18 @@ public class SessionService {
             saveFile(session, audioFile);
         }
 
-        // Voice transcript is processed exactly like a text answer
-        String text = (transcript != null && !transcript.isBlank()) ? transcript : "";
+        // Voice inputs are accepted only with explicit transcript confirmation in text.
+        String text = (transcript != null) ? transcript.trim() : "";
+        if (text.isBlank() || !transcriptConfirmed) {
+            SessionResponse response = new SessionResponse();
+            response.setSessionId(session.getSessionId());
+            response.setStatus(session.getStatus());
+            response.setMessage(
+                    "For voice accessibility, please review the transcript and confirm it in text before submission.");
+            response.setComplete(false);
+            response.setConfirmation(true);
+            return response;
+        }
         return processInteraction(session, text);
     }
 
@@ -141,9 +152,7 @@ public class SessionService {
         CaseSession session = sessionRepository.findBySessionIdAndUser_UserId(sessionId, user.getUserId())
                 .orElseThrow(() -> new RuntimeException("Session not found"));
 
-        entityRepository.deleteAll(entityRepository.findBySession_SessionId(sessionId));
-        answerRepository.deleteAll(answerRepository.findBySession_SessionIdOrderByCreatedAtAsc(sessionId));
-        sessionRepository.delete(session);
+        purgeSessionData(session);
     }
 
     // ----------------------------------------------------------------
@@ -208,7 +217,14 @@ public class SessionService {
         sessionRepository.save(session);
 
         // 5. Build and return DTO
-        return buildResponse(session, agentResponse);
+        SessionResponse response = buildResponse(session, agentResponse);
+
+        // Compliance mode: delete session data automatically after completion.
+        if (Boolean.TRUE.equals(isDoc)) {
+            purgeSessionData(session);
+        }
+
+        return response;
     }
 
     // ----------------------------------------------------------------
@@ -311,5 +327,13 @@ public class SessionService {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
+
+    private void purgeSessionData(CaseSession session) {
+        String sid = session.getSessionId();
+        entityRepository.deleteAll(entityRepository.findBySession_SessionId(sid));
+        answerRepository.deleteAll(answerRepository.findBySession_SessionIdOrderByCreatedAtAsc(sid));
+        dbFileRepository.deleteAll(dbFileRepository.findBySession_SessionId(sid));
+        sessionRepository.delete(session);
     }
 }

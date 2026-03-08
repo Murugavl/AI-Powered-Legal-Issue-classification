@@ -1,5 +1,6 @@
 package com.legal.document.service;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.*;
@@ -11,7 +12,9 @@ import java.util.Map;
 public class LegalServiceAgent {
 
     private final RestTemplate restTemplate = new RestTemplate();
-    private final String pythonServiceUrl   = "http://localhost:8000/process";
+
+    @Value("${legal.python-service-url:http://localhost:8000/process}")
+    private String pythonServiceUrl;
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> processUserMessage(String threadId, String input) {
@@ -47,3 +50,4 @@ public class LegalServiceAgent {
         return error;
     }
 }
+

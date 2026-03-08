@@ -1,3 +1,12 @@
+"""
+graph.py — AI Legal Document Preparation Assistant
+
+Flow:
+  Turn 1  : Classify issue → generate a CASE-SPECIFIC interview plan (LLM)
+  Turn 2+ : Extract answer to current question → advance plan
+  Final   : Confirmation summary → document generation
+"""
+
 import os
 import re
 import json
@@ -12,24 +21,38 @@ from bilingual_generator import generate_bilingual_document
 
 
 # ============================================================
+# GREETING
+# ============================================================
+
+GREETING = (
+    "Vanakkam! I am your AI Legal Document Assistant.\n"
+    "I am not a lawyer and I do not provide legal advice.\n"
+    "I can help you prepare a document based on the information you provide.\n\n"
+    "Please describe your issue briefly."
+)
+
+
+# ============================================================
 # STATE
 # ============================================================
 
 class LegalState(TypedDict):
-    messages:             Annotated[List[BaseMessage], add_messages]
-    thread_id:            str
-    primary_language:     str
-    collected_facts:      Dict[str, Any]
-    interview_plan:       List[Dict]
-    answered_keys:        List[str]
-    current_question_key: str
-    stage:                str            # collecting | confirming | done
-    next_step:            str
-    intent:               str
-    turn_count:           int
-    generated_content:    str
-    readiness_score:      int
-    last_input_hash:      str
+    messages:               Annotated[List[BaseMessage], add_messages]
+    thread_id:              str
+    primary_language:       str
+    collected_facts:        Dict[str, Any]
+    interview_plan:         List[Dict]     # [{key, label, question, show_example}]
+    answered_keys:          List[str]
+    current_question_key:   str
+    stage:                  str            # collecting | confirming | done
+    next_step:              str
+    intent:                 str
+    category:               str
+    turn_count:             int
+    generated_content:      str
+    readiness_score:        int
+    last_input_hash:        str
+    classification_shown:   bool
 
 
 # ============================================================
@@ -48,41 +71,98 @@ def is_real_value(v) -> bool:
 
 def strip_markdown(text: str) -> str:
     text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'__(.+?)__', r'\1', text)
-    text = re.sub(r'#{1,6}\s+', '', text)
-    text = text.replace("```", "")
-    return text.strip()
+    text = re.sub(r'__(.+?)__',     r'\1', text)
+    text = re.sub(r'#{1,6}\s+',     '',    text)
+    return text.replace("```", "").strip()
 
 
 def parse_llm_json(raw: str) -> dict:
-    """Reliably parse JSON from LLM output, stripping markdown fences."""
     raw = raw.strip()
     raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-    raw = re.sub(r'\s*```\s*$', '', raw, flags=re.MULTILINE)
-    raw = raw.strip()
-    # Find the first { ... } block if there's surrounding text
+    raw = re.sub(r'\s*```\s*$',       '', raw, flags=re.MULTILINE)
     match = re.search(r'\{.*\}', raw, re.DOTALL)
     if match:
         raw = match.group(0)
     return json.loads(raw)
 
 
+def is_final_confirmation(text: str) -> bool:
+    upper    = text.strip().upper().rstrip(".!? ")
+    stripped = upper.replace("THE ", "").replace(", ", " ").replace("THAT IS ", "").strip()
+    return (
+        upper in {
+            "YES", "OK", "OKAY", "CORRECT", "CONFIRMED", "SURE", "YEP", "YA", "HAAN",
+            "LOOKS GOOD", "THATS CORRECT", "YES IT IS", "YES CORRECT",
+            "AAMAM", "SARI", "PROCEED", "GENERATE",
+        }
+        or any(p in stripped for p in [
+            "YES ABOVE", "YES I CONFIRM", "EVERYTHING IS CORRECT", "ALL CORRECT",
+            "INFORMATION IS CORRECT", "INFORMATION ARE CORRECT",
+            "ABOVE INFORMATION", "DETAILS ARE CORRECT", "DATA IS CORRECT",
+            "CORRECT PROCEED",
+        ])
+        or upper.startswith("YES")
+    )
+
+
+def is_edit_request(text: str) -> bool:
+    upper = text.strip().upper()
+    return any(p in upper for p in [
+        "NO,", "NO ", "CHANGE", "EDIT", "WRONG", "INCORRECT", "NOT CORRECT",
+        "WANT TO MAKE", "PLEASE CHANGE", "SOMETHING IS WRONG", "MODIFY",
+    ])
+
+
+# ── Questions that benefit from an example hint ─────────────────────────────
+# These are address/location type questions where an example clarifies format.
+EXAMPLE_HINTS = {
+    "user_full_address":        "(e.g., 12, Anna Nagar 2nd Street, Chennai)",
+    "incident_location":        "(e.g., 45 Mount Road, Teynampet, Chennai)",
+    "office_location":          "(e.g., 45 Mount Road, Teynampet, Chennai)",
+    "location_details":         "(e.g., Near XYZ Junction, Coimbatore)",
+    "property_address":         "(e.g., Plot 5, Gandhi Street, Madurai)",
+    "user_city_state":          "(e.g., Anna Nagar, Chennai, Tamil Nadu)",
+    "complainant_address":      "(e.g., 12, Anna Nagar 2nd Street, Chennai, Tamil Nadu)",
+    "product_purchase_location":"(e.g., XYZ Electronics, Anna Nagar, Chennai)",
+    "bank_branch_address":      "(e.g., SBI, T. Nagar Branch, Chennai)",
+}
+
+# Personal keys — appended at END of every plan, in this fixed order
+PERSONAL_KEYS = [
+    {
+        "key":      "user_full_name",
+        "label":    "Your Full Name",
+        "question": "What is your full name?",
+    },
+    {
+        "key":      "user_full_address",
+        "label":    "Your Full Residential Address",
+        "question": "What is your full residential address?",
+        # hint appended dynamically from EXAMPLE_HINTS
+    },
+    {
+        "key":      "user_phone",
+        "label":    "Your Phone Number",
+        "question": "What is your phone number?",
+    },
+]
+PERSONAL_KEY_SET = {s["key"] for s in PERSONAL_KEYS}
+
+
 # ============================================================
-# NODE 1 — DETECT LANGUAGE (locked on first message only)
+# NODE 1 — DETECT LANGUAGE
 # ============================================================
 
 def detect_language_node(state: LegalState):
     if state.get("primary_language"):
         return {}
-
     messages = state.get("messages", [])
     if not messages:
         return {"primary_language": "en"}
-
     last_msg = messages[-1].content
     prompt = (
-        'Detect the ISO 639-1 language code of the text below.\n'
-        'Return ONLY the 2-letter code. Valid codes: en ta hi te kn ml mr bn gu\n\n'
+        "Detect the ISO 639-1 language code of this text.\n"
+        "Return ONLY the 2-letter code. Valid: en ta hi te kn ml mr bn gu\n\n"
         f'Text: "{last_msg}"'
     )
     try:
@@ -92,7 +172,6 @@ def detect_language_node(state: LegalState):
             lang = "en"
     except Exception:
         lang = "en"
-
     return {"primary_language": lang}
 
 
@@ -109,30 +188,35 @@ def classify_and_plan_node(state: LegalState):
     stage           = state.get("stage", "collecting")
     turn_count      = (state.get("turn_count") or 0) + 1
     last_user_msg   = messages[-1].content.strip() if messages else ""
+    lower_msg       = last_user_msg.lower()
+
+    # ── Evidence upload ───────────────────────────────────────────────────
+    if lower_msg.startswith("i have uploaded evidence:"):
+        filename = last_user_msg.split(":", 1)[1].strip() if ":" in last_user_msg else "evidence file"
+        existing = str(collected_facts.get("evidence_available", "")).strip()
+        note     = f"Uploaded file: {filename}"
+        collected_facts["evidence_available"] = (
+            f"{existing}; {note}" if is_real_value(existing) else note
+        )
+        if "evidence_available" not in answered_keys:
+            answered_keys.append("evidence_available")
+        missing = [s for s in interview_plan if s["key"] not in answered_keys]
+        return {
+            "collected_facts": collected_facts, "answered_keys": answered_keys,
+            "next_step": "ask_confirmation" if not missing else "ask_question",
+            "stage":     "confirming"       if not missing else "collecting",
+            "turn_count": turn_count, "current_question_key": current_q_key,
+        }
 
     # ── CONFIRMING STAGE ─────────────────────────────────────────────────
     if stage == "confirming":
-        upper = last_user_msg.strip().upper().rstrip(".!?")
-        confirmed = upper in {
-            "YES", "OK", "OKAY", "CORRECT", "CONFIRMED", "SURE",
-            "LOOKS GOOD", "THAT IS CORRECT", "THATS CORRECT", "YES IT IS", "YES CORRECT"
-        } or any(p in upper for p in [
-            "YES, THE ABOVE", "YES THE ABOVE", "YES I CONFIRM",
-            "EVERYTHING IS CORRECT", "ALL CORRECT", "INFORMATION IS CORRECT",
-            "ABOVE INFORMATION IS CORRECT",
-        ])
-        wants_edit = any(p in upper for p in [
-            "NO", "CHANGE", "EDIT", "WRONG", "INCORRECT", "NOT CORRECT",
-            "WANT TO MAKE", "PLEASE CHANGE", "SOMETHING IS WRONG",
-        ])
-
-        if confirmed:
+        if is_final_confirmation(last_user_msg):
             return {
                 "stage": "done", "next_step": "generate_document",
                 "turn_count": turn_count, "collected_facts": collected_facts,
                 "interview_plan": interview_plan, "answered_keys": answered_keys,
             }
-        elif wants_edit:
+        elif is_edit_request(last_user_msg):
             return {
                 "stage": "collecting", "next_step": "ask_question",
                 "turn_count": turn_count, "collected_facts": collected_facts,
@@ -145,94 +229,99 @@ def classify_and_plan_node(state: LegalState):
                 "interview_plan": interview_plan, "answered_keys": answered_keys,
             }
 
-    # ── TURN 1: Build interview plan ─────────────────────────────────────
+    # ── TURN 1: Classify + generate interview plan ────────────────────────
     if turn_count == 1:
-        plan_prompt = f"""You are a legal document intake planner for India.
+        prompt = f"""You are an Indian legal document intake assistant.
+A user described their legal problem. Do the following:
 
-A user has described their legal problem. Do three things:
-1. Identify the legal issue type (intent) — short, specific description.
-2. Check safety: is this an ACTIVE immediate threat to life RIGHT NOW? (UNSAFE only if yes)
-3. Design a precise interview plan — ordered list of facts to collect.
+1. Classify into ONE of:
+   Theft / Robbery | Assault | Cyber crime | Consumer complaint |
+   Salary / Employment dispute | Property dispute | Harassment / Threat |
+   Cheating / Fraud | Family / Matrimonial | Banking issue |
+   RTI Application | Insurance dispute | Other civil complaint
 
-USER'S MESSAGE:
-"{last_user_msg}"
+2. Safety routing:
+   - "refuse"             → immediate life threat or illegal/unethical request
+   - "refer_professional" → outside India, serious criminal liability, complex litigation
+   - "allow"              → normal document preparation
 
-INTERVIEW PLAN RULES:
-- Each step collects ONE specific fact relevant to THIS exact case.
-- Study the user's problem carefully. Design steps specific to it.
-  Ask about the details that MATTER for this type of complaint — amounts, dates, parties involved,
-  what happened, what evidence exists, what action was taken.
-- COMBINE naturally paired facts into one key:
-    date + time → single key (e.g. incident_date_time, label "Date and Time of Incident")
-    make + model → single key (e.g. vehicle_details, label "Vehicle Make, Model and Color")
-- OMIT questions that are irrelevant to document drafting for this case.
-- 5 to 9 steps total. Quality over quantity.
-- ALWAYS end with EXACTLY these 3 keys as the last 3 steps (in this order):
-    user_full_name  / "Your Full Name"
-    user_city_state / "City and State"
-    user_phone      / "Your Phone Number"
+3. Design a CASE-SPECIFIC interview plan — 4 to 7 questions for THIS exact problem.
+   RULES:
+   - THEFT / ROBBERY: what was stolen (make/model/reg if vehicle), date+time (combined one question),
+     exact location, how discovered, cards/IDs stolen, any reporting already done.
+   - CYBER CRIME: transaction date+time (one question), amount, card/account type,
+     how fraud occurred, digital evidence available.
+   - CONSUMER: product/service name, purchase date, exact defect, seller name, refund attempt.
+   - EMPLOYMENT: employer name, issue type, dates, HR escalation, any written proof.
+   - PROPERTY/RENT: property address, landlord name, specific dispute, rent amount.
+   - COMBINE paired facts into ONE question (e.g. date + time → one key).
+   - NEVER ask: suspect description, CCTV availability, police station name, whether FIR filed.
+   - DO NOT include address/location questions — those are handled by PERSONAL_KEYS.
 
-INITIAL FACTS:
-- Extract facts the user ALREADY stated in their message.
-- NEVER extract user_full_name, user_phone, or user_city_state from the first message.
+4. Extract facts ALREADY clearly stated in the user message.
+   NEVER extract personal info: full_name, phone, address, city, state.
+   Only extract case-specific facts that were clearly stated.
+
+USER MESSAGE: "{last_user_msg}"
 
 Return valid JSON only. No markdown.
 {{
-  "intent": "<short description of the legal issue>",
-  "safety_status": "SAFE",
-  "initial_facts": {{
-    "<key>": "<value from first message if explicitly stated>"
-  }},
+  "category": "<category>",
+  "policy_action": "allow",
+  "policy_message": "",
+  "initial_facts": {{}},
   "interview_plan": [
-    {{"key": "<fact_key>", "label": "<Human Readable Label>"}},
-    {{"key": "user_full_name", "label": "Your Full Name"}},
-    {{"key": "user_city_state", "label": "City and State"}},
-    {{"key": "user_phone", "label": "Your Phone Number"}}
+    {{"key": "<snake_case>", "label": "<Human Label>", "question": "<exact question text>"}}
   ]
 }}
 """
         try:
             resp = llm.invoke([
-                SystemMessage(content="Legal intake planner. Return valid JSON only. No markdown."),
-                HumanMessage(content=plan_prompt)
+                SystemMessage(content="Legal intake planner. Valid JSON only. No markdown."),
+                HumanMessage(content=prompt)
             ])
             data = parse_llm_json(resp.content)
         except Exception as e:
-            print(f"[classify_and_plan/turn1] error: {e}")
+            print(f"[classify/turn1] error: {e}")
             data = {
-                "intent": "legal complaint",
-                "safety_status": "SAFE",
+                "category": "Other civil complaint",
+                "policy_action": "allow", "policy_message": "",
                 "initial_facts": {},
                 "interview_plan": [
-                    {"key": "incident_date_time",   "label": "Date and Time of Incident"},
-                    {"key": "incident_location",    "label": "Location of Incident"},
-                    {"key": "incident_description", "label": "Description of What Happened"},
-                    {"key": "harm_suffered",        "label": "Loss or Harm Suffered"},
-                    {"key": "evidence_available",   "label": "Evidence You Have"},
-                    {"key": "user_full_name",        "label": "Your Full Name"},
-                    {"key": "user_city_state",       "label": "City and State"},
-                    {"key": "user_phone",            "label": "Your Phone Number"},
-                ]
+                    {"key": "incident_date_time",   "label": "Date and Time",
+                     "question": "When did this incident occur? Please give the date and approximate time."},
+                    {"key": "incident_location",    "label": "Location",
+                     "question": "Where did this take place?"},
+                    {"key": "incident_description", "label": "What Happened",
+                     "question": "Please briefly describe what happened."},
+                    {"key": "loss_suffered",        "label": "Loss or Harm",
+                     "question": "What loss or harm have you suffered?"},
+                    {"key": "evidence_available",   "label": "Evidence Available",
+                     "question": "What evidence do you have — documents, messages, receipts, screenshots?"},
+                ],
             }
 
-        if data.get("safety_status") == "UNSAFE":
-            return {
-                "stage": "done", "next_step": "refusal", "turn_count": turn_count,
-                "intent": "SAFETY_REFUSAL", "collected_facts": collected_facts,
-                "interview_plan": [], "answered_keys": [],
-            }
+        policy_action  = str(data.get("policy_action", "allow")).strip().lower()
+        policy_message = str(data.get("policy_message", "")).strip()
 
-        intent = data.get("intent", "legal complaint")
-        plan   = data.get("interview_plan", [])
+        if policy_action == "refuse":
+            return {"stage": "done", "next_step": "refusal", "turn_count": turn_count,
+                    "generated_content": policy_message,
+                    "collected_facts": {}, "interview_plan": [], "answered_keys": [],
+                    "classification_shown": False}
 
-        # Enforce personal details always at end
-        PERSONAL = ["user_full_name", "user_city_state", "user_phone"]
-        plan = [s for s in plan if s["key"] not in PERSONAL]
-        plan += [
-            {"key": "user_full_name",  "label": "Your Full Name"},
-            {"key": "user_city_state", "label": "City and State"},
-            {"key": "user_phone",      "label": "Your Phone Number"},
-        ]
+        if policy_action == "refer_professional":
+            return {"stage": "done", "next_step": "refer_professional", "turn_count": turn_count,
+                    "generated_content": policy_message,
+                    "collected_facts": {}, "interview_plan": [], "answered_keys": [],
+                    "classification_shown": False}
+
+        category = data.get("category", "Other civil complaint")
+        plan     = list(data.get("interview_plan", []))
+
+        # Strip personal keys from LLM plan, append fixed personal keys at end
+        plan = [s for s in plan if s.get("key") not in PERSONAL_KEY_SET]
+        plan += PERSONAL_KEYS
 
         # Deduplicate
         seen, deduped = set(), []
@@ -242,16 +331,18 @@ Return valid JSON only. No markdown.
                 deduped.append(step)
         plan = deduped
 
-        # Merge initial facts — never accept personal keys from turn 1
-        NEVER_EARLY = {"user_full_name", "user_phone", "user_city_state", "user_email"}
+        # Store initial_facts ONLY for keys that exist in the plan
+        # (prevents stale general facts like "stolen_item: motorcycle" appearing in summary)
+        plan_keys = {s["key"] for s in plan}
         for k, v in (data.get("initial_facts") or {}).items():
-            if k not in NEVER_EARLY and is_real_value(v):
+            if k in plan_keys and k not in PERSONAL_KEY_SET and is_real_value(v):
                 collected_facts[k] = v
 
-        plan_keys    = {s["key"] for s in plan}
         new_answered = [k for k in collected_facts if k in plan_keys]
+        intent = f"{category} — {last_user_msg[:200]}"
 
         return {
+            "category":             category,
             "intent":               intent,
             "collected_facts":      collected_facts,
             "interview_plan":       plan,
@@ -261,9 +352,10 @@ Return valid JSON only. No markdown.
             "turn_count":           turn_count,
             "readiness_score":      0,
             "current_question_key": "",
+            "classification_shown": False,
         }
 
-    # ── SUBSEQUENT TURNS: Extract answer to current question ─────────────
+    # ── SUBSEQUENT TURNS: Extract answer ──────────────────────────────────
     if not current_q_key:
         return {
             "next_step": "ask_question", "stage": "collecting",
@@ -276,25 +368,16 @@ Return valid JSON only. No markdown.
         current_q_key.replace("_", " ").title()
     )
 
-    history = "\n".join([
-        f"{'User' if m.type == 'human' else 'Assistant'}: {m.content}"
-        for m in messages[-8:]
-    ])
+    extract_prompt = f"""Extract the answer for this question.
 
-    extract_prompt = f"""Extract the answer for the question that was asked.
-
-Question asked: "{current_q_key}" — {current_label}
-User's reply: "{last_user_msg}"
+Question: "{current_q_key}" — {current_label}
+User replied: "{last_user_msg}"
 
 Rules:
-- Extract exactly what the user stated for this question.
-- If user said "no", "none", "don't know", "not available" → value = "Not available"
-- You may also extract other facts clearly volunteered in this reply.
-- NEVER extract user_full_name, user_phone, user_city_state unless that was the question asked.
-- Do NOT infer or invent anything.
-
-Recent conversation context:
-{history[-1200:]}
+- Extract exactly what the user stated.
+- If user said "no", "none", "don't know" → value = "Not available"
+- NEVER extract user_full_name, user_phone, user_full_address unless that was the exact question.
+- Do NOT invent or infer anything.
 
 Return JSON only:
 {{
@@ -305,7 +388,7 @@ Return JSON only:
 """
     try:
         resp      = llm.invoke([
-            SystemMessage(content="Fact extractor. JSON only. No inference. No markdown."),
+            SystemMessage(content="Fact extractor. JSON only. No inference."),
             HumanMessage(content=extract_prompt)
         ])
         data      = parse_llm_json(resp.content)
@@ -314,17 +397,47 @@ Return JSON only:
         print(f"[extract] error: {e}")
         extracted = {current_q_key: last_user_msg[:300]}
 
-    for k, v in extracted.items():
-        if is_real_value(v):
-            collected_facts[k] = v
+    candidate = extracted.get(current_q_key, "")
+    collected_facts[current_q_key] = (
+        candidate if is_real_value(candidate)
+        else ("Not available" if lower_msg in SKIP_VALUES else last_user_msg[:300])
+    )
 
     if current_q_key not in answered_keys:
         answered_keys.append(current_q_key)
 
+    # Mark incidentally answered plan keys
     plan_keys = {s["key"] for s in interview_plan}
-    for k in extracted:
-        if k in plan_keys and k not in answered_keys:
+    for k, v in extracted.items():
+        if k in plan_keys and k not in answered_keys and is_real_value(v):
             answered_keys.append(k)
+            if k not in collected_facts:
+                collected_facts[k] = v
+
+    # ── Auto-extract district, state, pincode from full address ───────────
+    if current_q_key == "user_full_address" and is_real_value(collected_facts.get("user_full_address")):
+        addr = collected_facts["user_full_address"]
+        addr_prompt = f"""From this Indian residential address: "{addr}"
+Extract district, state, and pincode if present.
+Return JSON only:
+{{
+  "district": "<district name or empty>",
+  "state":    "<state name or empty>",
+  "pincode":  "<6-digit pincode or empty>"
+}}
+If you cannot determine a value, use empty string "".
+"""
+        try:
+            ar = llm.invoke([
+                SystemMessage(content="Indian address parser. JSON only."),
+                HumanMessage(content=addr_prompt)
+            ])
+            ad = parse_llm_json(ar.content)
+            if ad.get("district"):  collected_facts["user_district"] = ad["district"]
+            if ad.get("state"):     collected_facts["user_state"]    = ad["state"]
+            if ad.get("pincode"):   collected_facts["user_pincode"]  = ad["pincode"]
+        except Exception as e:
+            print(f"[addr-parse] {e}")
 
     missing   = [s for s in interview_plan if s["key"] not in answered_keys]
     total     = len(interview_plan)
@@ -335,7 +448,7 @@ Return JSON only:
         "answered_keys":        answered_keys,
         "interview_plan":       interview_plan,
         "next_step":            "ask_confirmation" if not missing else "ask_question",
-        "stage":                "confirming" if not missing else "collecting",
+        "stage":                "confirming"       if not missing else "collecting",
         "readiness_score":      readiness,
         "turn_count":           turn_count,
         "current_question_key": current_q_key,
@@ -347,56 +460,57 @@ Return JSON only:
 # ============================================================
 
 def respond_node(state: LegalState):
-    next_step       = state.get("next_step", "ask_question")
-    lang            = state.get("primary_language", "en")
-    intent          = state.get("intent", "legal issue")
-    collected_facts = state.get("collected_facts", {})
-    interview_plan  = state.get("interview_plan", [])
-    answered_keys   = state.get("answered_keys", [])
-    turn_count      = state.get("turn_count", 1)
-    messages        = state.get("messages", [])
+    next_step            = state.get("next_step", "ask_question")
+    lang                 = state.get("primary_language", "en")
+    category             = state.get("category", "")
+    collected_facts      = state.get("collected_facts", {})
+    interview_plan       = state.get("interview_plan", [])
+    answered_keys        = state.get("answered_keys", [])
+    classification_shown = state.get("classification_shown", False)
 
-    # ── SAFETY REFUSAL ───────────────────────────────────────────────────
+    # ── SAFETY ───────────────────────────────────────────────────────────
     if next_step == "refusal":
-        return {"generated_content": (
+        msg = state.get("generated_content") or (
             "I am unable to assist with this request through this platform. "
             "If you are in immediate danger, please call 100 (Police) or 112 (Emergency) immediately."
-        )}
+        )
+        return {"generated_content": msg}
+
+    if next_step == "refer_professional":
+        msg = state.get("generated_content") or (
+            "This matter requires a qualified legal professional. "
+            "I can only help with standard document preparation in India. "
+            "Please consult a lawyer before proceeding."
+        )
+        return {"generated_content": msg}
 
     # ── CONFIRMATION SUMMARY ─────────────────────────────────────────────
     if next_step == "ask_confirmation":
-        summary_lines  = []
-        plan_keys_seen = set()
-
+        summary_lines = []
+        # Only iterate plan keys — never extra facts outside the plan
         for step in interview_plan:
             k = step["key"]
             v = collected_facts.get(k)
-            plan_keys_seen.add(k)
             if is_real_value(v):
-                lbl = step.get("label", k.replace("_", " ").title())
-                summary_lines.append(f"{lbl}: {v}")
-
-        for k, v in collected_facts.items():
-            if k not in plan_keys_seen and is_real_value(v):
-                summary_lines.append(f"{k.replace('_', ' ').title()}: {v}")
+                summary_lines.append(f"{step.get('label', k)}: {v}")
 
         numbered = "\n".join(f"{i+1}. {line}" for i, line in enumerate(summary_lines)) \
                    if summary_lines else "(No details collected yet.)"
 
-        prompt = f"""You are a warm Indian legal document assistant. NOT a lawyer.
+        prompt = f"""You are an AI Legal Document Assistant. NOT a lawyer.
 
-Write a short confirmation message in language code: {lang}
+Write a confirmation message in language code: {lang}
 
-Format (translate all labels and instructions to {lang}, keep fact VALUES unchanged):
-- One warm sentence thanking the user for providing all the information.
-- "Here is a summary of the information I have collected:"
-- The numbered list below — copy values EXACTLY, only translate the labels:
+Translate ALL labels and instructions to {lang}. Keep fact VALUES unchanged.
+
+Structure:
+1. One sentence thanking the user for providing all the details.
+2. "Please review the information below. If everything is correct, reply YES to generate your document."
+3. This numbered list (copy EXACTLY, translate only the label before the colon):
 
 {numbered}
 
-- "Please review the above information."
-- "To confirm, please reply: Yes, the above information is correct."
-- "If anything needs to be corrected, please let me know."
+4. "If anything needs to be changed, please let me know what to correct."
 
 Rules: No markdown. Plain text only. Return ONLY the message.
 """
@@ -408,79 +522,58 @@ Rules: No markdown. Plain text only. Return ONLY the message.
 
     if not missing:
         return {
-            "generated_content": "Thank you. Let me now prepare a summary for your review.",
+            "generated_content": "Thank you for providing all the details. Let me prepare a summary for your review.",
             "next_step": "ask_confirmation",
             "stage":     "confirming",
         }
 
-    target       = missing[0]
-    target_key   = target["key"]
-    target_label = target.get("label", target_key.replace("_", " ").title())
+    target         = missing[0]
+    target_key     = target["key"]
+    base_question  = target.get("question", f"Could you provide: {target.get('label', target_key)}?")
 
-    history_text = "\n".join([
-        f"{'User' if m.type == 'human' else 'Assistant'}: {m.content}"
-        for m in (messages[-6:] if len(messages) >= 6 else messages)
-    ])
+    # Append example hint for address/location fields only
+    example_hint = EXAMPLE_HINTS.get(target_key, "")
+    fixed_question = f"{base_question} {example_hint}".strip()
 
-    already_collected = {k: v for k, v in collected_facts.items() if is_real_value(v)}
-
-    # First question only: one-time classification context
-    classification_context = ""
-    if turn_count <= 2:
-        classification_context = (
-            "Begin with ONE sentence of cautious issue context: "
-            "'Situations like this may relate to [area], which is commonly addressed under "
-            "[relevant Indian law/authority].' Then ask your question immediately. "
-            "Do NOT repeat this classification sentence in any future question.\n\n"
+    # Classification context — shown EXACTLY ONCE
+    cat_line = ""
+    new_classification_shown = classification_shown
+    if not classification_shown and category:
+        cat_line = (
+            f"Thank you for explaining the situation. "
+            f"This may relate to: {category}, which is commonly addressed under Indian legal procedure. "
+            f"I will ask a few questions to collect the details needed to prepare the document.\n\n"
         )
+        new_classification_shown = True
 
-    # Brief acknowledgment with the actual value confirmed — gives a running recap like GPT
-    ack_instruction = ""
-    if answered_keys and turn_count > 2:
-        last_key = answered_keys[-1]
-        last_val = collected_facts.get(last_key, "")
-        last_label = next(
-            (s["label"] for s in interview_plan if s["key"] == last_key),
-            last_key.replace("_", " ").title()
-        )
+    # Acknowledgment for subsequent answers
+    ack = ""
+    if answered_keys:
+        last_val = collected_facts.get(answered_keys[-1], "")
         if is_real_value(last_val):
-            ack_instruction = (
-                f"Start with exactly one sentence acknowledging the previous answer: "
-                f"'Thank you, I have noted: {last_label} — {last_val}.' "
-                f"Then immediately ask the next question on a new line.\n\n"
-            )
+            ack = "Thank you, I have noted that.\n\n"
 
-    prompt = f"""You are a warm, empathetic Indian legal document assistant (NOT a lawyer).
-You collect facts one at a time to draft legal documents. You never give legal advice.
+    if lang == "en":
+        response = cat_line + ack + fixed_question
+    else:
+        translate_prompt = f"""Translate this question into language code: {lang}
 
-Legal issue: {intent}
-Facts collected so far: {json.dumps(already_collected, ensure_ascii=False)}
+English: "{fixed_question}"
+{"Also prepend (translated): " + repr(cat_line) if cat_line else ""}
+{"Also prepend a brief acknowledgment like 'Thank you, I have noted that.'" if ack else ""}
 
-Conversation so far:
-{history_text}
-
-{classification_context}{ack_instruction}Ask ONE focused question to collect:
-Key: "{target_key}"
-Label: "{target_label}"
-
-RULES:
-1. ONE question only. Never combine two questions.
-2. Make it specific to this exact case and label. Ask for the concrete detail described by the label.
-3. Do NOT ask for anything already in the facts above.
-4. Do NOT summarise or repeat previously collected information.
-5. No section headers, no lists, no bullet points.
-6. Respond ONLY in language code: {lang}.
-7. No markdown, no asterisks, no hashtags.
-8. Return ONLY: [optional 1-line ack] + [the single question].
+Rules: ONE question only. Short and polite. No markdown. Return ONLY the translated text.
 """
-    resp = llm.invoke([
-        SystemMessage(content="Legal intake. One question per turn. Plain text. No markdown."),
-        HumanMessage(content=prompt)
-    ])
+        resp     = llm.invoke([
+            SystemMessage(content="Translator. Plain text only."),
+            HumanMessage(content=translate_prompt)
+        ])
+        response = strip_markdown(resp.content.strip())
 
     return {
-        "generated_content":    strip_markdown(resp.content.strip()),
+        "generated_content":    response,
         "current_question_key": target_key,
+        "classification_shown": new_classification_shown,
     }
 
 
@@ -489,13 +582,13 @@ RULES:
 # ============================================================
 
 def generate_document_node(state: LegalState):
-    facts  = state.get("collected_facts", {})
-    intent = state.get("intent", "Legal Issue")
-    lang   = state.get("primary_language", "en")
+    facts    = state.get("collected_facts", {})
+    intent   = state.get("intent", "Legal Issue")
+    category = state.get("category", "")
+    lang     = state.get("primary_language", "en")
 
     result     = generate_bilingual_document(intent, facts, lang)
-    doc_type   = result.get("document_type", "")
-    next_steps = _get_next_steps(doc_type, intent, facts)
+    next_steps = _get_next_steps(category, intent, facts)
 
     payload = json.dumps({
         "document_type":         result["document_type"],
@@ -505,6 +598,7 @@ def generate_document_node(state: LegalState):
         "english_content":       result["english_content"],
         "disclaimer_en":         result["disclaimer_en"],
         "disclaimer_user_lang":  result["disclaimer_user_lang"],
+        "reference_number":      result.get("reference_number", ""),
         "next_steps":            next_steps,
     }, ensure_ascii=False)
 
@@ -515,48 +609,40 @@ def generate_document_node(state: LegalState):
     }
 
 
-def _get_next_steps(doc_type: str, intent: str, facts: dict) -> list:
-    """
-    Fully LLM-generated next steps — no hardcoded case logic.
-    The LLM reads the actual intent, doc_type, and facts and gives
-    specific, actionable steps for whatever case this is.
-    """
+def _get_next_steps(category: str, intent: str, facts: dict) -> list:
     clean = {k: v for k, v in facts.items()
              if v and str(v).strip().lower() not in
              {"", "null", "unknown", "not available", "none", "n/a", "na"}}
     facts_text = "\n".join(
         f"  {k.replace('_', ' ').title()}: {v}" for k, v in clean.items()
     )
+    prompt = f"""You are an Indian legal document assistant.
+A user just received a drafted legal document. Give them 3 to 5 practical next steps.
 
-    prompt = f"""You are an Indian legal assistant. A user just received a drafted legal document.
-Give them 3 to 5 practical next steps to take immediately.
-
+Category: {category}
 Legal issue: {intent}
-Document type: {doc_type}
 
 Case facts:
 {facts_text}
 
 Rules:
-- Be SPECIFIC to this exact case. Read the facts carefully.
-- Mention specific Indian portals, helplines, or authorities relevant to this case type.
-- If facts mention a city or state, include state-specific resources if known.
-- Put the most urgent action first.
+- Specific to this exact case and facts.
+- Mention specific Indian portals, helplines, or authorities.
+- Most urgent action first.
 - Each step is ONE clear sentence.
-- Return ONLY a JSON array of strings. No explanation, no markdown, no preamble.
+- No legal advice — only practical filing/reporting actions.
+- Return ONLY a JSON array of strings. No explanation, no markdown.
 
-Example output format:
-["Urgent step here.", "Second step here.", "Third step here."]
+Example: ["Step one.", "Step two.", "Step three."]
 """
     try:
-        resp = llm.invoke([
+        resp  = llm.invoke([
             SystemMessage(content="Next steps advisor. Return a JSON array of strings only."),
             HumanMessage(content=prompt)
         ])
-        raw = resp.content.strip()
-        raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-        raw = re.sub(r'\s*```\s*$', '', raw, flags=re.MULTILINE)
-        # Find JSON array
+        raw   = resp.content.strip()
+        raw   = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
+        raw   = re.sub(r'\s*```\s*$',       '', raw, flags=re.MULTILINE)
         match = re.search(r'\[.*\]', raw, re.DOTALL)
         if match:
             raw = match.group(0)
@@ -574,9 +660,7 @@ Example output format:
 
 def route_after_classify(state: LegalState):
     step = state.get("next_step", "ask_question")
-    if step == "generate_document":
-        return "generate_document"
-    return "respond"
+    return "generate_document" if step == "generate_document" else "respond"
 
 
 # ============================================================
@@ -631,21 +715,20 @@ graph_app = workflow.compile(checkpointer=checkpointer)
 def process_message(thread_id: str, user_input: str) -> dict:
     if not user_input or not user_input.strip():
         return {
-            "content": (
-                "Vanakkam! I am your AI Legal Document Assistant. "
-                "I am not a lawyer and I do not provide legal advice. "
-                "Please describe your legal issue in your own words and I will help you "
-                "prepare the necessary documents."
-            ),
-            "entities": {}, "intent": "", "readiness_score": 0,
-            "is_document": False, "is_confirmation": False, "next_steps": [],
+            "content": GREETING, "entities": {}, "intent": "",
+            "readiness_score": 0, "is_document": False,
+            "is_confirmation": False, "next_steps": [],
         }
 
-    config     = {"configurable": {"thread_id": thread_id}}
-    input_hash = hashlib.md5(user_input.encode()).hexdigest()
+    config = {"configurable": {"thread_id": thread_id}}
 
     current_state = graph_app.get_state(config).values
-    if current_state.get("last_input_hash") == input_hash:
+    current_stage = current_state.get("stage", "")
+    input_hash    = hashlib.md5(user_input.encode()).hexdigest()
+    last_hash     = current_state.get("last_input_hash", "")
+
+    # Skip dedup when in confirming stage — "yes" must always be processed
+    if (input_hash == last_hash) and current_stage not in ("confirming", "done", ""):
         return _build_response(current_state)
 
     graph_app.invoke(

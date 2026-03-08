@@ -44,9 +44,11 @@ public class SessionController {
             @PathVariable String sessionId,
             @RequestParam(value = "audio",      required = false) MultipartFile audioFile,
             @RequestParam(value = "transcript", required = false) String transcript,
-            @RequestParam(value = "language",   defaultValue = "en") String language) {
+            @RequestParam(value = "language",   defaultValue = "en") String language,
+            @RequestParam(value = "transcriptConfirmed", defaultValue = "false") boolean transcriptConfirmed) {
         return ResponseEntity.ok(
-                sessionService.submitVoiceAnswer(sessionId, audioFile, transcript, language, phoneFrom(token)));
+                sessionService.submitVoiceAnswer(
+                        sessionId, audioFile, transcript, language, transcriptConfirmed, phoneFrom(token)));
     }
 
     /** Upload an evidence file — the filename is forwarded to the NLP engine as context */

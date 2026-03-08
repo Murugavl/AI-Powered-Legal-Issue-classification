@@ -10,36 +10,25 @@ import './CaseWizard.css';
 ───────────────────────────────────────────── */
 
 const KEY_LABELS = {
+    complainant_name: 'Complainant Name',
+    complainant_address: 'Address',
+    complainant_city_state: 'City / State',
+    complainant_phone: 'Phone Number',
+    incident_date: 'Date of Incident',
+    incident_time: 'Time of Incident',
+    incident_location: 'Location',
+    incident_description: 'Description',
+    accused_description: 'Accused Description',
+    property_details: 'Property / Loss Details',
+    evidence_details: 'Evidence Available',
+    police_status: 'Police Complaint Status',
+    police_station_name: 'Police Station',
+    // legacy keys (backward compat)
     user_full_name: 'Complainant Name',
     user_address: 'Address',
     user_city_state: 'City / State',
     user_phone: 'Phone Number',
-    user_email: 'Email',
-    incident_date: 'Date of Incident',
-    incident_date_time: 'Date & Time of Incident',
-    incident_location: 'Location',
-    incident_description: 'Description',
-    counterparty_name: 'Other Party Name',
-    counterparty_upi_or_id: 'UPI ID / Account',
-    counterparty_platform: 'Platform / Channel',
-    counterparty_role: 'Other Party Role',
-    counterparty_address: 'Other Party Address',
-    financial_loss_value: 'Amount Involved',
-    payment_method: 'Payment Method',
-    payment_date: 'Payment Date',
-    payment_reference: 'Payment Reference',
     evidence_available: 'Evidence Available',
-    product_name: 'Product / Service',
-    defect_description: 'Defect / Problem',
-    stolen_items: 'Stolen / Missing Items',
-    witness_details: 'Witnesses',
-    harm_description: 'Impact / Harm',
-    prior_complaints: 'Previous Actions Taken',
-    rti_department: 'Government Department',
-    information_sought: 'Information Requested',
-    property_address: 'Property Address',
-    rent_amount: 'Monthly Rent',
-    deposit_amount: 'Security Deposit',
 };
 
 const labelFor = (key) =>
@@ -54,9 +43,7 @@ const isRealValue = (v) =>
    MessageBubble — renders \n as proper line breaks
 ───────────────────────────────────────────── */
 function MessageBubble({ msg }) {
-    // Split on newlines so they render as visual line breaks
     const lines = String(msg.text).split('\n');
-
     return (
         <div className={`message ${msg.sender}`}>
             {lines.map((line, i) => (
@@ -70,7 +57,7 @@ function MessageBubble({ msg }) {
 }
 
 /* ─────────────────────────────────────────────
-   NextSteps — shown inline after document ready
+   NextSteps
 ───────────────────────────────────────────── */
 function NextStepsMessage({ steps }) {
     if (!steps || steps.length === 0) return null;
@@ -82,6 +69,140 @@ function NextStepsMessage({ steps }) {
                     <li key={i}>{step}</li>
                 ))}
             </ol>
+        </div>
+    );
+}
+
+/* ─────────────────────────────────────────────
+   DocumentPreviewModal
+───────────────────────────────────────────── */
+function DocumentPreviewModal({ documentPayload, onDownload, onClose, loading }) {
+    if (!documentPayload) return null;
+
+    const english = documentPayload.english_content || documentPayload.user_language_content || '';
+    const userLang = documentPayload.user_language_content || '';
+    const showBoth = userLang && userLang !== english;
+
+    return (
+        <div style={{
+            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
+            backgroundColor: 'rgba(10, 15, 30, 0.85)', display: 'flex',
+            justifyContent: 'center', alignItems: 'center', zIndex: 2000,
+            backdropFilter: 'blur(6px)', padding: '1rem',
+        }}>
+            <div style={{
+                background: 'var(--card-bg, #1e293b)', borderRadius: '14px',
+                border: '1px solid var(--glass-border, rgba(255,255,255,0.1))',
+                boxShadow: '0 30px 60px rgba(0,0,0,0.6)',
+                width: '100%', maxWidth: '820px', maxHeight: '90vh',
+                display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            }}>
+                {/* Header */}
+                <div style={{
+                    padding: '1.2rem 1.5rem', borderBottom: '1px solid var(--glass-border, rgba(255,255,255,0.1))',
+                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                    background: 'rgba(99,102,241,0.08)',
+                }}>
+                    <div>
+                        <h2 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-primary, #e2e8f0)' }}>
+                            📄 Document Preview
+                        </h2>
+                        <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary, #94a3b8)' }}>
+                            Review your document before downloading
+                        </p>
+                    </div>
+                    <button onClick={onClose} style={{
+                        background: 'transparent', border: 'none', color: 'var(--text-secondary, #94a3b8)',
+                        fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1,
+                    }}>✕</button>
+                </div>
+
+                {/* Scrollable content */}
+                <div style={{ overflowY: 'auto', padding: '1.5rem', flex: 1 }}>
+
+                    {/* English Version */}
+                    <div style={{ marginBottom: showBoth ? '2rem' : 0 }}>
+                        {showBoth && (
+                            <div style={{
+                                fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em',
+                                color: '#6366f1', marginBottom: '0.8rem', textTransform: 'uppercase',
+                            }}>English Version</div>
+                        )}
+                        <pre style={{
+                            background: 'rgba(255,255,255,0.04)', borderRadius: '8px',
+                            padding: '1.2rem', fontFamily: "'Courier New', monospace",
+                            fontSize: '0.82rem', lineHeight: 1.7,
+                            color: 'var(--text-primary, #e2e8f0)',
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            border: '1px solid rgba(255,255,255,0.06)',
+                            margin: 0,
+                        }}>
+                            {english || '(No content)'}
+                        </pre>
+                    </div>
+
+                    {/* Tamil / User-language Version */}
+                    {showBoth && (
+                        <div>
+                            <div style={{
+                                fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em',
+                                color: '#22c55e', marginBottom: '0.8rem', textTransform: 'uppercase',
+                            }}>Tamil / Regional Version</div>
+                            <pre style={{
+                                background: 'rgba(255,255,255,0.04)', borderRadius: '8px',
+                                padding: '1.2rem', fontFamily: "'Noto Sans Tamil', 'Courier New', monospace",
+                                fontSize: '0.88rem', lineHeight: 1.9,
+                                color: 'var(--text-primary, #e2e8f0)',
+                                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                border: '1px solid rgba(255,255,255,0.06)',
+                                margin: 0,
+                            }}>
+                                {userLang}
+                            </pre>
+                        </div>
+                    )}
+
+                    {/* Disclaimer box */}
+                    {documentPayload.disclaimer_en && (
+                        <div style={{
+                            marginTop: '1.5rem', padding: '1rem',
+                            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
+                            borderRadius: '8px', fontSize: '0.78rem', color: '#fca5a5', lineHeight: 1.6,
+                        }}>
+                            <strong>⚠ DISCLAIMER</strong><br />
+                            {documentPayload.disclaimer_en}
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer buttons */}
+                <div style={{
+                    padding: '1rem 1.5rem', borderTop: '1px solid var(--glass-border, rgba(255,255,255,0.1))',
+                    display: 'flex', gap: '0.8rem', justifyContent: 'flex-end',
+                    background: 'rgba(99,102,241,0.05)',
+                }}>
+                    <button
+                        onClick={onClose}
+                        style={{
+                            padding: '0.6rem 1.4rem', borderRadius: '8px', cursor: 'pointer',
+                            background: 'transparent', border: '1px solid rgba(255,255,255,0.2)',
+                            color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem',
+                        }}>
+                        ✕ Close
+                    </button>
+                    <button
+                        onClick={onDownload}
+                        disabled={loading}
+                        style={{
+                            padding: '0.6rem 1.6rem', borderRadius: '8px', cursor: 'pointer',
+                            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
+                            border: 'none', color: '#fff', fontWeight: 600, fontSize: '0.9rem',
+                            opacity: loading ? 0.6 : 1,
+                        }}>
+                        {loading ? 'Generating PDF…' : '⬇ Download PDF'}
+                    </button>
+                </div>
+            </div>
         </div>
     );
 }
@@ -108,6 +229,7 @@ function CaseWizard() {
     const [documentPayload, setDocumentPayload] = useState(null);
     const [nextSteps, setNextSteps] = useState([]);
     const [isUploading, setIsUploading] = useState(false);
+    const [showPreview, setShowPreview] = useState(false);
 
     const messagesEndRef = useRef(null);
     useEffect(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [messages]);
@@ -119,18 +241,15 @@ function CaseWizard() {
         }
     }, [navigate]);
 
-    /* ── apply an API response to state ────────────────────── */
+    /* ── apply an API response to state ─────────── */
     const applyResponse = (data) => {
         setLatestData(data);
         setEntities(data.extractedEntities || {});
 
         if (data.complete && data.documentPayload) {
-            // Document ready
             try {
                 const parsed = JSON.parse(data.documentPayload);
                 setDocumentPayload(parsed);
-
-                // Store next steps
                 const steps = parsed.next_steps || data.nextSteps || [];
                 setNextSteps(steps);
             } catch {
@@ -138,13 +257,11 @@ function CaseWizard() {
             }
             setIsComplete(true);
 
-            // Show document-ready message inline
             addSystemMessage(
                 data.message ||
                 'Your legal document has been prepared. You can preview and download it below.'
             );
 
-            // Show next steps inline as a follow-up message (like GPT does)
             const steps = (() => {
                 try {
                     const p = JSON.parse(data.documentPayload);
@@ -157,7 +274,6 @@ function CaseWizard() {
             }
 
         } else if (data.message) {
-            // Normal question, acknowledgment, or confirmation summary — all go inline in chat
             addSystemMessage(data.message);
         }
     };
@@ -176,7 +292,7 @@ function CaseWizard() {
         ]);
     };
 
-    /* ── send text ──────────────────────────────────────────── */
+    /* ── send text ─────────────────────────────── */
     const handleSend = async () => {
         const text = inputText.trim();
         if (!text || loading) return;
@@ -206,7 +322,7 @@ function CaseWizard() {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
     };
 
-    /* ── generate + download PDF ────────────────────────────── */
+    /* ── generate + download PDF ─────────────── */
     const generateDocument = async () => {
         if (!documentPayload) {
             alert('No document data available. Please complete the interview first.');
@@ -222,6 +338,7 @@ function CaseWizard() {
             a.download = `LegalDocument_${documentPayload.document_type || 'document'}.pdf`;
             a.click();
             window.URL.revokeObjectURL(url);
+            setShowPreview(false);
         } catch (err) {
             console.error(err);
             alert('Error generating PDF. Please try again.');
@@ -230,17 +347,14 @@ function CaseWizard() {
         }
     };
 
-    /* ── file upload ────────────────────────────────────────── */
+    /* ── file upload ────────────────────────── */
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file || !sessionId) return;
-
         setIsUploading(true);
         const formData = new FormData();
         formData.append('file', file);
-
         try {
-            // Use central axios instance — picks up auth token + env base URL automatically
             const response = await sessionAPI.uploadEvidence(sessionId, formData);
             applyResponse(response.data);
         } catch (err) {
@@ -251,16 +365,33 @@ function CaseWizard() {
         }
     };
 
-    /* ── voice input ────────────────────────────────────────── */
+    /* ── voice input ─────────────────────────── */
     const handleVoiceInput = async (audioFile) => {
         setLoading(true);
         addSystemMessage('🎤 Processing voice input...');
-
         try {
+            const transcript = window.prompt(
+                'Please type the transcript of your voice input so it can be reviewed in text before submission:'
+            );
+            if (!transcript || !transcript.trim()) {
+                addSystemMessage('Voice input was not submitted. Please provide transcript text and try again.');
+                return;
+            }
+
+            const confirmText = window.prompt(
+                `Transcript captured:\n\n${transcript}\n\nType YES to confirm this transcript exactly as shown.`
+            );
+            const transcriptConfirmed = (confirmText || '').trim().toUpperCase() === 'YES';
+            if (!transcriptConfirmed) {
+                addSystemMessage('Transcript not confirmed. Voice input was not submitted.');
+                return;
+            }
+
             const formData = new FormData();
             formData.append('audio', audioFile);
-            formData.append('transcript', '');
+            formData.append('transcript', transcript.trim());
             formData.append('language', 'en-IN');
+            formData.append('transcriptConfirmed', 'true');
 
             let sid = sessionId;
             if (!sid) {
@@ -276,15 +407,15 @@ function CaseWizard() {
             console.error(err);
             addSystemMessage('Error processing voice input. Please try again or type your answer.');
         } finally {
+            setMessages(prev => prev.filter(m => m.text !== '🎤 Processing voice input...'));
             setLoading(false);
         }
     };
 
-    /* ── delete session ─────────────────────────────────────── */
+    /* ── delete session ──────────────────────── */
     const handleDeleteCase = async () => {
         if (!sessionId) return;
         if (!window.confirm('Delete this session permanently? This cannot be undone.')) return;
-
         try {
             await sessionAPI.delete(sessionId);
             alert('Session deleted.');
@@ -295,6 +426,13 @@ function CaseWizard() {
         }
     };
 
+    /* ── go to dashboard (preserves generated case) */
+    const handleGoToDashboard = () => {
+        // The case was already saved server-side during document generation.
+        // Navigate directly — the dashboard will fetch and show it.
+        navigate('/dashboard');
+    };
+
     const realEntities = Object.entries(entities).filter(([, v]) => isRealValue(v));
 
     /* ─────────────────────────────────────────────
@@ -302,6 +440,16 @@ function CaseWizard() {
     ───────────────────────────────────────────── */
     return (
         <div className="wizard-container">
+
+            {/* Preview Modal */}
+            {showPreview && (
+                <DocumentPreviewModal
+                    documentPayload={documentPayload}
+                    onDownload={generateDocument}
+                    onClose={() => setShowPreview(false)}
+                    loading={loading}
+                />
+            )}
 
             {/* Header */}
             <div className="wizard-header">
@@ -330,7 +478,6 @@ function CaseWizard() {
                             : <MessageBubble key={msg.id} msg={msg} />
                     ))}
 
-                    {/* Typing indicator */}
                     {loading && (
                         <div className="typing-indicator">
                             <span className="dot" /><span className="dot" /><span className="dot" />
@@ -340,16 +487,29 @@ function CaseWizard() {
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input area / complete area */}
+                {/* Input / complete actions */}
                 {isComplete ? (
                     <div className="input-area complete-actions">
-                        <button className="btn btn-primary" onClick={generateDocument} disabled={loading}>
-                            📄 Download Bilingual PDF
+                        {/* Preview button — prominent */}
+                        <button
+                            className="btn btn-primary"
+                            onClick={() => setShowPreview(true)}
+                            disabled={loading}
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            👁 Preview Document
+                        </button>
+                        {/* Download without preview */}
+                        <button
+                            className="btn btn-secondary"
+                            onClick={generateDocument}
+                            disabled={loading}
+                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                            📄 Download PDF
                         </button>
                         <button
                             className="btn btn-secondary"
-                            onClick={() => navigate('/dashboard')}>
-                            Go to Dashboard
+                            onClick={handleGoToDashboard}>
+                            📊 Go to Dashboard
                         </button>
                         <button
                             className="btn btn-ghost"
@@ -412,7 +572,6 @@ function CaseWizard() {
                         ))}
                     </div>
 
-                    {/* Evidence readiness */}
                     {latestData?.readinessScore !== undefined && (
                         <div style={{ marginTop: '1.5rem' }}>
                             <div className="entities-title">Evidence Readiness</div>
