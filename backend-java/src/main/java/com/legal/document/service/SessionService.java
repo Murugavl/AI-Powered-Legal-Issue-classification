@@ -45,9 +45,14 @@ public class SessionService {
         session.setUser(user);
         session.setStatus("ACTIVE");
         session.setConfidenceScore(0.0);
+        // Pre-store the user’s phone from auth so the NLP engine never needs to ask
+        session.setPhoneNumber(phoneNumber);
         session = sessionRepository.save(session);
 
-        return processInteraction(session, request.getInitialText());
+        // Inject phone as a seed fact before the first user message
+        // Format: special prefix the Python engine recognises to pre-populate user_phone
+        String seedMsg = "__PREFILL__ user_phone=" + phoneNumber + " || " + request.getInitialText();
+        return processInteraction(session, seedMsg);
     }
 
     // ----------------------------------------------------------------
@@ -217,14 +222,9 @@ public class SessionService {
         sessionRepository.save(session);
 
         // 5. Build and return DTO
-        SessionResponse response = buildResponse(session, agentResponse);
-
-        // Compliance mode: delete session data automatically after completion.
-        if (Boolean.TRUE.equals(isDoc)) {
-            purgeSessionData(session);
-        }
-
-        return response;
+        return buildResponse(session, agentResponse);
+        // NOTE: Sessions are NOT purged on completion — they are saved to the dashboard.
+        // Purge is handled only by SessionCleanupService (7-day TTL) or explicit user delete.
     }
 
     // ----------------------------------------------------------------

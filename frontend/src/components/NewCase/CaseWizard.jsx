@@ -262,16 +262,8 @@ function CaseWizard() {
                 'Your legal document has been prepared. You can preview and download it below.'
             );
 
-            const steps = (() => {
-                try {
-                    const p = JSON.parse(data.documentPayload);
-                    return p.next_steps || data.nextSteps || [];
-                } catch { return data.nextSteps || []; }
-            })();
-            if (steps && steps.length > 0) {
-                setNextSteps(steps);
-                addNextStepsMessage(steps);
-            }
+            // next_steps are stored in state but NOT shown in chat
+            // They are available in the document payload for the dashboard
 
         } else if (data.message) {
             addSystemMessage(data.message);
@@ -456,6 +448,17 @@ function CaseWizard() {
                 <h1>AI Legal Document Assistant</h1>
                 <p className="wizard-subhead">Not a lawyer · India only · Documents for informational purposes</p>
                 <div style={{ position: 'absolute', right: '2rem', top: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                    {sessionId && !isComplete && (
+                        <button
+                            onClick={() => {
+                                if (window.confirm('Save this session and go to the dashboard? You can continue it later from there.')) {
+                                    navigate('/dashboard');
+                                }
+                            }}
+                            style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', color: '#818cf8', borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem' }}>
+                            💾 Save & Exit
+                        </button>
+                    )}
                     {sessionId && (
                         <button
                             onClick={handleDeleteCase}

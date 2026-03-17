@@ -10,50 +10,9 @@ import java.io.InputStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * BilingualPdfService
- *
- * Renders the Indian From/To petition template produced by bilingual_generator.py.
- *
- * Template structure:
- *
- *   From
- *   [Name],
- *   [Address],
- *   [City],
- *   [District - Pincode],
- *   [State]
- *
- *   To
- *   [Authority],
- *   [City, District]
- *
- *   Ref No: ...
- *
- *   Sub: [subject]
- *
- *   Respected Sir/Madam,
- *
- *   [Body paragraphs — first person, justified]
- *
- *   Relevant documents attached:
- *   1. ...
- *
- *   Thank You,
- *
- *   Date: DD/MM/YYYY
- *
- *   Signature: ___________________________
- *   [Name]
- *   [Phone]
- *
- *   DISCLAIMER — NOT LEGAL ADVICE
- *   [text]
- */
 @Service
 public class BilingualPdfService {
 
-    // ── Colours ────────────────────────────────────────────────────────────────
     private static final Color INK        = new Color(15,  23,  42);
     private static final Color SLATE      = new Color(100, 116, 139);
     private static final Color DIVIDER    = new Color(203, 213, 225);
@@ -63,15 +22,11 @@ public class BilingualPdfService {
     private static final Color NAVY       = new Color(15,  23,  42);
     private static final Color BADGE_BLUE = new Color(37,  99,  235);
 
-    // ── Page geometry (A4) ─────────────────────────────────────────────────────
     private static final float ML = 72;
     private static final float MR = 72;
-    private static final float MT = 112;  // top margin — room for header bar
-    private static final float MB = 55;
+    private static final float MT = 72;
+    private static final float MB = 72;
 
-    private static final Font F_DISC_HDR = new Font(Font.HELVETICA, 8, Font.BOLD, RED_DARK);
-
-    // ── Unicode font cache ─────────────────────────────────────────────────────
     private static final Map<String, BaseFont> FONT_CACHE = new LinkedHashMap<>();
 
     private static BaseFont loadBaseFont(String path) {
@@ -122,10 +77,9 @@ public class BilingualPdfService {
 
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Document doc = new Document(PageSize.A4, ML, MR, MT, MB);
-
         try {
-            PdfWriter writer   = PdfWriter.getInstance(doc, out);
-            boolean engOnly    = "en".equalsIgnoreCase(userLanguage);
+            PdfWriter writer = PdfWriter.getInstance(doc, out);
+            boolean engOnly  = "en".equalsIgnoreCase(userLanguage);
             PageDecorator deco = new PageDecorator(writer, metadata, userLanguage, engOnly);
             writer.setPageEvent(deco);
             doc.open();
@@ -135,7 +89,6 @@ public class BilingualPdfService {
             } else {
                 deco.setMode(userLanguage, false);
                 renderLetter(doc, userLanguageContent, userLanguage);
-
                 doc.newPage();
                 deco.setMode("en", true);
                 renderLetter(doc, englishContent, "en");
@@ -147,7 +100,7 @@ public class BilingualPdfService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // RENDER ONE LETTER (no separate disclaimer — it's embedded in content)
+    // RENDER ONE LETTER
     // ─────────────────────────────────────────────────────────────────────────
     private void renderLetter(Document doc, String content, String lang)
             throws DocumentException {
@@ -156,61 +109,80 @@ public class BilingualPdfService {
             return;
         }
 
-        Font fBody    = f(lang, 10, Font.NORMAL, INK);
-        Font fBold    = f(lang, 10, Font.BOLD,   INK);
-        Font fSubj    = f(lang, 10, Font.BOLD,   BLUE_BOLD);
-        Font fLabel   = f(lang, 10, Font.BOLD,   INK);
+        Font fBody  = f(lang, 10, Font.NORMAL, INK);
+        Font fBold  = f(lang, 10, Font.BOLD,   INK);
+        Font fSubj  = f(lang, 10, Font.BOLD,   BLUE_BOLD);
+        Font fMeta  = f(lang,  9, Font.NORMAL, SLATE);
+        Font fLabel = f(lang, 10, Font.BOLD,   INK);
 
-        String[]      lines           = content.split("\\n", -1);
-        boolean       pastSalutation  = false;
-        boolean       inDisclaimer    = false;
-        boolean       inSignatureBlock= false;
-        StringBuilder proseBuf        = new StringBuilder();
+        String[]      lines            = content.split("\\n", -1);
+        boolean       pastSalutation   = false;
+        boolean       inSignatureBlock = false;
+        boolean       inDisclaimer     = false;
+        StringBuilder proseBuf         = new StringBuilder();
 
         for (String raw : lines) {
             String line = raw.trim();
 
-            // ── Skip old-format section headings ─────────────────────────
             if (isOldFormatHeading(line)) continue;
 
-            // ── Blank line ───────────────────────────────────────────────
+            // Blank lines
             if (line.isEmpty()) {
-                flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(3));
+                if (!pastSalutation) {
+                    doc.add(gap(4));
+                } else {
+                    flushProse(doc, proseBuf, fBody);
+                }
                 continue;
             }
 
-            // ── "From" — start of sender block ───────────────────────────
-            if (line.equals("From")) {
-                flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(2));
-                doc.add(new Paragraph("From", fBold));
-                continue;
-            }
-
-            // ── "To" — start of recipient block ──────────────────────────
-            if (line.equals("To")) {
-                flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(6));
-                doc.add(new Paragraph("To", fBold));
-                continue;
-            }
-
-            // ── "Ref No:" line ────────────────────────────────────────────
+            // Ref No:
             if (line.startsWith("Ref No:")) {
                 flushProse(doc, proseBuf, fBody);
                 Paragraph p = new Paragraph();
                 p.add(new Chunk("Ref No: ", fLabel));
-                p.add(new Chunk(line.substring("Ref No:".length()).trim(), fBody));
-                p.setSpacingAfter(2);
+                p.add(new Chunk(line.substring("Ref No:".length()).trim(), fMeta));
+                p.setSpacingAfter(1);
                 doc.add(p);
                 continue;
             }
 
-            // ── "Sub:" line ───────────────────────────────────────────────
+            // Date:
+            if (line.startsWith("Date:")) {
+                flushProse(doc, proseBuf, fBody);
+                Paragraph p = new Paragraph();
+                p.add(new Chunk("Date: ", fLabel));
+                p.add(new Chunk(line.substring("Date:".length()).trim(),
+                        inSignatureBlock ? fBody : fMeta));
+                p.setSpacingAfter(inSignatureBlock ? 2 : 1);
+                doc.add(p);
+                continue;
+            }
+
+            // From / From:
+            if (line.equals("From") || line.equals("From:")) {
+                flushProse(doc, proseBuf, fBody);
+                doc.add(gap(2));
+                Paragraph p = new Paragraph("From", fBold);
+                p.setSpacingAfter(1);
+                doc.add(p);
+                continue;
+            }
+
+            // To / To:
+            if (line.equals("To") || line.equals("To:")) {
+                flushProse(doc, proseBuf, fBody);
+                doc.add(gap(4));
+                Paragraph p = new Paragraph("To", fBold);
+                p.setSpacingAfter(1);
+                doc.add(p);
+                continue;
+            }
+
+            // Sub:
             if (line.startsWith("Sub:")) {
                 flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(4));
+                doc.add(gap(4));
                 String subText = line.substring("Sub:".length()).trim();
                 Paragraph p = new Paragraph();
                 p.add(new Chunk("Sub: ", fSubj));
@@ -220,91 +192,101 @@ public class BilingualPdfService {
                 continue;
             }
 
-            // ── Salutation ────────────────────────────────────────────────
+            // Salutation
             if (isSalutation(line)) {
                 flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(2));
-                doc.add(new Paragraph(line, fBody));
-                doc.add(spacer(6));
-                pastSalutation  = true;
+                doc.add(gap(2));
+                Paragraph p = new Paragraph(line, fBody);
+                p.setSpacingAfter(6);
+                doc.add(p);
+                pastSalutation   = true;
                 inSignatureBlock = false;
                 continue;
             }
 
-            // ── "Relevant documents attached:" ────────────────────────────
-            if (startsWithAny(line, "Relevant documents attached",
-                    "சம்பந்தப்பட்ட ஆவணங்கள்", "संलग्न दस्तावेज़")) {
+            // Section headings: evidence list, enclosures, legal provisions
+            if (line.startsWith("Relevant documents attached")
+                    || line.startsWith("Enclosures:")
+                    || line.startsWith("Applicable Legal Provisions")) {
                 flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(6));
-                doc.add(new Paragraph(line, fBold));
+                doc.add(gap(6));
+                Paragraph p = new Paragraph(line, fBold);
+                p.setSpacingAfter(3);
+                doc.add(p);
                 continue;
             }
 
-            // ── Numbered list item ────────────────────────────────────────
+            // Numbered list items — compact indented lines (no bullet symbol)
             if (line.matches("^\\d+\\.\\s+.+")) {
                 flushProse(doc, proseBuf, fBody);
+                String itemText = line.replaceFirst("^\\d+\\.\\s*", "").trim();
+                Paragraph p = new Paragraph(itemText, fBody);
+                p.setIndentationLeft(16);
+                p.setSpacingAfter(1);
+                doc.add(p);
+                continue;
+            }
+
+            // Closing: "Thank You," or "Yours faithfully,"
+            if (line.startsWith("Thank You") || line.startsWith("Thanking you")
+                    || line.startsWith("Yours faithfully") || line.startsWith("Yours sincerely")
+                    || line.startsWith("\u0ba8\u0ba9\u0bcd\u0bb1\u0bbf") || line.startsWith("\u0927\u0928\u094d\u092f\u0935\u093e\u0926")
+                    || line.startsWith("\u0b89\u0b99\u0bcd\u0b95\u0bb3\u0bcd \u0b89\u0ba3\u0bcd\u0bae\u0bc8\u0baf\u0bc1\u0bb3\u0bcd\u0bb3")) {
+                flushProse(doc, proseBuf, fBody);
+                doc.add(gap(6));
                 Paragraph p = new Paragraph(line, fBody);
-                p.setIndentationLeft(20);
+                p.setSpacingAfter(2);
+                doc.add(p);
+                inSignatureBlock = true;
+                continue;
+            }
+
+            // Signature:
+            if (line.startsWith("Signature:")) {
+                flushProse(doc, proseBuf, fBody);
+                doc.add(gap(6));
+                doc.add(new Paragraph(line, fBody));
+                inSignatureBlock = true;
+                continue;
+            }
+
+            // Underline / (Signature) marker
+            if (line.startsWith("___") || line.equals("(Signature)")) {
+                Paragraph p = new Paragraph(line, fBody);
                 p.setSpacingAfter(2);
                 doc.add(p);
                 continue;
             }
 
-            // ── "Thank You," / "Thanking you." ────────────────────────────
-            if (startsWithAny(line, "Thank You", "Thanking you", "நன்றி", "धन्यवाद")) {
-                flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(8));
-                doc.add(new Paragraph(line, fBody));
-                inSignatureBlock = true;
-                continue;
-            }
-
-            // ── "Date:" line in signature ─────────────────────────────────
-            if (line.startsWith("Date:")) {
-                flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(4));
+            // Labelled signature fields: Name:, Contact:, Place:
+            if (inSignatureBlock && (line.startsWith("Name:")
+                    || line.startsWith("Contact:") || line.startsWith("Place:"))) {
+                String[] kv = line.split(":", 2);
                 Paragraph p = new Paragraph();
-                p.add(new Chunk("Date: ", fLabel));
-                p.add(new Chunk(line.substring("Date:".length()).trim(), fBody));
+                p.add(new Chunk(kv[0] + ": ", fLabel));
+                p.add(new Chunk(kv.length > 1 ? kv[1].trim() : "", fBody));
+                p.setSpacingAfter(2);
                 doc.add(p);
                 continue;
             }
 
-            // ── "Signature:" line ─────────────────────────────────────────
-            if (line.startsWith("Signature:")) {
-                flushProse(doc, proseBuf, fBody);
-                doc.add(spacer(6));
-                doc.add(new Paragraph(line, fBody));
-                inSignatureBlock = true;
-                continue;
-            }
-
-            // ── Signature underline ───────────────────────────────────────
-            if (line.startsWith("___")) {
-                doc.add(new Paragraph(line, fBody));
-                doc.add(spacer(2));
-                continue;
-            }
-
-            // ── DISCLAIMER heading ────────────────────────────────────────
+            // DISCLAIMER heading — adds a clear visual separator before the box
             if (line.toUpperCase().startsWith("DISCLAIMER")) {
                 flushProse(doc, proseBuf, fBody);
                 inDisclaimer = true;
-                // Render disclaimer box header
-                addDisclaimerHeader(doc);
+                beginDisclaimerBox(doc);
                 continue;
             }
 
-            // ── Disclaimer body text ──────────────────────────────────────
+            // Disclaimer body text
             if (inDisclaimer) {
-                addDisclaimerBody(doc, line, lang);
+                finaliseDisclaimerBox(doc, line, lang);
+                inDisclaimer = false;
                 continue;
             }
 
-            // ── Everything else ───────────────────────────────────────────
+            // Everything else
             if (!pastSalutation) {
-                // Pre-salutation: From/To address lines, sub
-                // Lines ending in comma are address continuation lines
                 Paragraph p = new Paragraph(line, fBody);
                 p.setSpacingAfter(1);
                 doc.add(p);
@@ -313,38 +295,38 @@ public class BilingualPdfService {
                 p.setSpacingAfter(2);
                 doc.add(p);
             } else {
-                // Body prose — accumulate for justified paragraph rendering
                 if (proseBuf.length() > 0) proseBuf.append(" ");
                 proseBuf.append(raw.trim());
             }
         }
 
         flushProse(doc, proseBuf, fBody);
-        doc.add(spacer(6));
+        doc.add(gap(4));
     }
 
-    private void flushProse(Document doc, StringBuilder buf, Font font) throws DocumentException {
+    // Prose flusher
+    private void flushProse(Document doc, StringBuilder buf, Font font)
+            throws DocumentException {
         String text = buf.toString().trim();
         if (!text.isEmpty()) {
             Paragraph p = new Paragraph(text, font);
             p.setAlignment(Element.ALIGN_JUSTIFIED);
-            p.setLeading(17);
+            p.setLeading(15);
             p.setSpacingAfter(8);
             doc.add(p);
         }
         buf.setLength(0);
     }
 
-    // ── Disclaimer rendered as a single red-bordered box ──────────────────────
-    private boolean disclaimerBoxStarted = false;
-    private PdfPCell disclaimerCell = null;
-    private PdfPTable disclaimerTable = null;
+    // Disclaimer — single red box with clear gap above
+    private PdfPTable pendingDisclaimerTable = null;
+    private PdfPCell  pendingDisclaimerCell  = null;
 
-    private void addDisclaimerHeader(Document doc) throws DocumentException {
-        // Divider rule
+    private void beginDisclaimerBox(Document doc) throws DocumentException {
+        // Horizontal rule separator
         PdfPTable rule = new PdfPTable(1);
         rule.setWidthPercentage(100);
-        rule.setSpacingBefore(12);
+        rule.setSpacingBefore(18);   // <— clear gap above disclaimer
         rule.setSpacingAfter(6);
         PdfPCell rc = new PdfPCell(new Phrase(" "));
         rc.setBorder(Rectangle.BOTTOM);
@@ -354,44 +336,38 @@ public class BilingualPdfService {
         rule.addCell(rc);
         doc.add(rule);
 
-        // Start disclaimer box
-        disclaimerTable = new PdfPTable(1);
-        disclaimerTable.setWidthPercentage(100);
-        disclaimerCell = new PdfPCell();
-        disclaimerCell.setBackgroundColor(RED_LITE);
-        disclaimerCell.setBorderColor(new Color(252, 165, 165));
-        disclaimerCell.setBorderWidth(0.8f);
-        disclaimerCell.setPadding(10);
+        pendingDisclaimerTable = new PdfPTable(1);
+        pendingDisclaimerTable.setWidthPercentage(100);
+        pendingDisclaimerCell = new PdfPCell();
+        pendingDisclaimerCell.setBackgroundColor(RED_LITE);
+        pendingDisclaimerCell.setBorderColor(new Color(252, 165, 165));
+        pendingDisclaimerCell.setBorderWidth(0.8f);
+        pendingDisclaimerCell.setPadding(10);
 
-        Paragraph hdr = new Paragraph("DISCLAIMER — NOT LEGAL ADVICE", F_DISC_HDR);
+        Font fHdr = new Font(Font.HELVETICA, 8, Font.BOLD, RED_DARK);
+        Paragraph hdr = new Paragraph("DISCLAIMER — NOT LEGAL ADVICE", fHdr);
         hdr.setSpacingAfter(4);
-        disclaimerCell.addElement(hdr);
-        disclaimerBoxStarted = true;
+        pendingDisclaimerCell.addElement(hdr);
     }
 
-    private void addDisclaimerBody(Document doc, String text, String lang) throws DocumentException {
-        if (!disclaimerBoxStarted || disclaimerCell == null) return;
-
-        Font fDiscBody = new Font(unicodeFontFor(lang), 8, Font.NORMAL, RED_DARK);
-        Paragraph body = new Paragraph(text, fDiscBody);
+    private void finaliseDisclaimerBox(Document doc, String text, String lang)
+            throws DocumentException {
+        if (pendingDisclaimerCell == null) return;
+        Font fBody = new Font(unicodeFontFor(lang), 8, Font.NORMAL, RED_DARK);
+        Paragraph body = new Paragraph(text, fBody);
         body.setLeading(12);
-        disclaimerCell.addElement(body);
-
-        // Finalise box
-        disclaimerTable.addCell(disclaimerCell);
-        doc.add(disclaimerTable);
-        disclaimerBoxStarted = false;
-        disclaimerCell  = null;
-        disclaimerTable = null;
+        pendingDisclaimerCell.addElement(body);
+        pendingDisclaimerTable.addCell(pendingDisclaimerCell);
+        doc.add(pendingDisclaimerTable);
+        pendingDisclaimerTable = null;
+        pendingDisclaimerCell  = null;
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────────
+    // Helpers
     private static boolean isOldFormatHeading(String line) {
         if (line.length() < 3 || line.length() > 60) return false;
         if (line.matches("[-=]{4,}.*")) return true;
-        // All-caps multi-word lines like "COMPLAINANT DETAILS", "INCIDENT DETAILS"
         if (line.equals(line.toUpperCase()) && line.matches("[A-Z][A-Z /\\-]{5,}")) {
-            // Whitelist legitimate all-caps that appear in our template
             if (line.startsWith("DISCLAIMER")) return false;
             return true;
         }
@@ -402,36 +378,32 @@ public class BilingualPdfService {
         return line.startsWith("Respected Sir/Madam")
             || line.startsWith("Respected Sir")
             || line.startsWith("Respected Madam")
-            || line.startsWith("மதிப்பிற்குரிய")
-            || line.startsWith("आदरणीय");
+            || line.startsWith("Dear ")
+            || line.startsWith("\u0bae\u0ba4\u0bbf\u0baa\u0bcd\u0baa\u0bbf\u0bb1\u0bcd\u0b95\u0bc1\u0bb0\u0bbf\u0baf")
+            || line.startsWith("\u0b85\u0ba9\u0bcd\u0baa\u0bc1\u0bb3\u0bcd\u0bb3")
+            || line.startsWith("\u0906\u0926\u0930\u0923\u0940\u092f")
+            || line.startsWith("\u092a\u094d\u0930\u093f\u092f ");
     }
 
-    private static boolean startsWithAny(String line, String... prefixes) {
-        for (String p : prefixes) if (line.startsWith(p)) return true;
-        return false;
-    }
-
-    private Paragraph spacer(float pts) {
+    private Paragraph gap(float pts) {
         Paragraph p = new Paragraph(" ");
-        p.setSpacingAfter(pts);
+        p.setLeading(pts);
+        p.setSpacingAfter(0);
         return p;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // PAGE DECORATOR — Header bar + metadata strip + footer
-    // ─────────────────────────────────────────────────────────────────────────
+    // Page decorator (no header/footer — kept minimal)
     private static class PageDecorator extends PdfPageEventHelper {
-        private final PdfWriter          writer;
+        private final PdfWriter           writer;
         private final Map<String, Object> metadata;
-        private       String             currentLang;
-        private       boolean            isEnglishCopy;
+        private       String              currentLang;
+        private       boolean             isEnglishCopy;
 
-        PageDecorator(PdfWriter writer, Map<String, Object> metadata,
-                      String lang, boolean englishOnly) {
-            this.writer        = writer;
-            this.metadata      = metadata;
+        PageDecorator(PdfWriter w, Map<String, Object> meta, String lang, boolean engOnly) {
+            this.writer        = w;
+            this.metadata      = meta;
             this.currentLang   = lang;
-            this.isEnglishCopy = englishOnly;
+            this.isEnglishCopy = engOnly;
         }
 
         void setMode(String lang, boolean englishCopy) {
@@ -439,132 +411,7 @@ public class BilingualPdfService {
             this.isEnglishCopy = englishCopy;
         }
 
-        @Override
-        public void onStartPage(PdfWriter w, Document doc) {
-            PdfContentByte cb   = w.getDirectContent();
-            float pageW         = doc.getPageSize().getWidth();
-            float pageH         = doc.getPageSize().getHeight();
-
-            // ── Header bar (navy, 44pt) ────────────────────────────────────
-            cb.saveState();
-            cb.setColorFill(NAVY);
-            cb.rectangle(0, pageH - 44, pageW, 44);
-            cb.fill();
-
-            cb.setColorFill(BADGE_BLUE);
-            cb.rectangle(pageW - 90, pageH - 44, 90, 44);
-            cb.fill();
-            cb.restoreState();
-
-            try {
-                BaseFont hf = BaseFont.createFont(BaseFont.HELVETICA_BOLD, BaseFont.CP1252, false);
-                BaseFont bf = BaseFont.createFont(BaseFont.HELVETICA,      BaseFont.CP1252, false);
-
-                cb.beginText();
-                cb.setColorFill(Color.WHITE);
-                cb.setFontAndSize(hf, 11);
-                cb.showTextAligned(Element.ALIGN_LEFT,
-                        "AI-Powered Legal Document Assistant | India",
-                        doc.leftMargin(), pageH - 20, 0);
-
-                cb.setFontAndSize(bf, 7);
-                cb.showTextAligned(Element.ALIGN_LEFT,
-                        "Automatically generated — Review with a legal professional before submission",
-                        doc.leftMargin(), pageH - 34, 0);
-
-                // Badge text
-                cb.setFontAndSize(hf, 7);
-                cb.showTextAligned(Element.ALIGN_CENTER,
-                        isEnglishCopy ? "ENGLISH" : "USER COPY",
-                        pageW - 45, pageH - 18, 0);
-                if (isEnglishCopy) {
-                    cb.showTextAligned(Element.ALIGN_CENTER, "OFFICIAL COPY",
-                            pageW - 45, pageH - 30, 0);
-                }
-                cb.endText();
-
-                // ── Metadata strip (light blue, 30pt) ──────────────────────
-                float stripTop = pageH - 44;
-                cb.saveState();
-                cb.setColorFill(new Color(219, 234, 254));
-                cb.rectangle(0, stripTop - 30, pageW, 30);
-                cb.fill();
-                cb.restoreState();
-
-                cb.beginText();
-                cb.setColorFill(NAVY);
-                float textY = stripTop - 12;
-                float third = pageW / 3f;
-
-                String docType = "";
-                String score   = "";
-                String genDate = java.time.LocalDate.now()
-                        .format(java.time.format.DateTimeFormatter.ofPattern("dd MMM yyyy"));
-                if (metadata != null) {
-                    docType = String.valueOf(metadata.getOrDefault("Document Type", ""));
-                    score   = String.valueOf(metadata.getOrDefault("Evidence Readiness Score", ""));
-                }
-
-                cb.setFontAndSize(hf, 6.5f);
-                cb.showTextAligned(Element.ALIGN_CENTER, "DOCUMENT TYPE",           third * 0.5f, textY + 8, 0);
-                cb.setFontAndSize(bf, 7.5f);
-                cb.showTextAligned(Element.ALIGN_CENTER, docType,                   third * 0.5f, textY - 2, 0);
-
-                cb.setFontAndSize(hf, 6.5f);
-                cb.showTextAligned(Element.ALIGN_CENTER, "EVIDENCE READINESS SCORE",third * 1.5f, textY + 8, 0);
-                cb.setFontAndSize(bf, 7.5f);
-                cb.showTextAligned(Element.ALIGN_CENTER, score,                     third * 1.5f, textY - 2, 0);
-
-                cb.setFontAndSize(hf, 6.5f);
-                cb.showTextAligned(Element.ALIGN_CENTER, "GENERATED DATE",          third * 2.5f, textY + 8, 0);
-                cb.setFontAndSize(bf, 7.5f);
-                cb.showTextAligned(Element.ALIGN_CENTER, genDate,                   third * 2.5f, textY - 2, 0);
-                cb.endText();
-
-                // Vertical dividers in strip
-                cb.saveState();
-                cb.setColorStroke(DIVIDER);
-                cb.setLineWidth(0.5f);
-                cb.moveTo(third,     stripTop);     cb.lineTo(third,     stripTop - 30);
-                cb.moveTo(third * 2, stripTop);     cb.lineTo(third * 2, stripTop - 30);
-                cb.stroke();
-                cb.restoreState();
-
-            } catch (Exception e) {
-                // Silently skip header if font fails
-            }
-        }
-
-        @Override
-        public void onEndPage(PdfWriter w, Document doc) {
-            PdfContentByte cb = w.getDirectContent();
-            try {
-                BaseFont hf = BaseFont.createFont(BaseFont.HELVETICA,      BaseFont.CP1252, false);
-                BaseFont bf = BaseFont.createFont(BaseFont.HELVETICA_BOLD, BaseFont.CP1252, false);
-                float pageW = doc.getPageSize().getWidth();
-                float footY = doc.bottomMargin() - 20;
-
-                cb.beginText();
-                cb.setColorFill(SLATE);
-                cb.setFontAndSize(hf, 7);
-                cb.showTextAligned(Element.ALIGN_LEFT,  "AI Legal Document Assistant",
-                        doc.leftMargin(), footY, 0);
-                cb.setFontAndSize(bf, 7);
-                cb.showTextAligned(Element.ALIGN_RIGHT,
-                        "Page " + w.getPageNumber() + " | Not Legal Advice",
-                        pageW - doc.rightMargin(), footY, 0);
-                cb.endText();
-
-                cb.saveState();
-                cb.setColorStroke(DIVIDER);
-                cb.setLineWidth(0.5f);
-                cb.moveTo(doc.leftMargin(),        footY + 10);
-                cb.lineTo(pageW - doc.rightMargin(), footY + 10);
-                cb.stroke();
-                cb.restoreState();
-            } catch (Exception e) {
-                // Silently skip footer
-            }
-        }
+        @Override public void onStartPage(PdfWriter w, Document doc) {}
+        @Override public void onEndPage(PdfWriter w, Document doc) {}
     }
 }

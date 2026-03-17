@@ -128,6 +128,8 @@ EXAMPLE_HINTS = {
 }
 
 # Personal keys — appended at END of every plan, in this fixed order
+# NOTE: user_phone is intentionally excluded here — users log in with their phone
+# number, so we pre-populate it from the auth token instead of asking again.
 PERSONAL_KEYS = [
     {
         "key":      "user_full_name",
@@ -140,13 +142,17 @@ PERSONAL_KEYS = [
         "question": "What is your full residential address?",
         # hint appended dynamically from EXAMPLE_HINTS
     },
-    {
-        "key":      "user_phone",
-        "label":    "Your Phone Number",
-        "question": "What is your phone number?",
-    },
 ]
 PERSONAL_KEY_SET = {s["key"] for s in PERSONAL_KEYS}
+# user_phone is still in SKIP_PERSONAL so the LLM doesn’t ask it either
+PERSONAL_KEY_SET.add("user_phone")
+
+# Evidence question — always appended just before personal keys
+EVIDENCE_KEY = {
+    "key":      "evidence_available",
+    "label":    "Evidence Available",
+    "question": "What evidence do you have? For example: SMS alerts, screenshots, receipts, photographs, medical reports, or any documents related to this incident.",
+}
 
 
 # ============================================================
@@ -179,6 +185,39 @@ def detect_language_node(state: LegalState):
 # NODE 2 — CLASSIFY + PLAN + EXTRACT
 # ============================================================
 
+def get_evidence_question(category: str) -> dict:
+    """Generate case-specific evidence question with relevant examples"""
+    
+    base_q = "What evidence do you have to support this complaint?"
+    
+    # Category-specific examples
+    if category == "Consumer complaint":
+        examples = "purchase receipt, invoice, warranty card, product photos, defect photos, email/SMS with seller, packaging"
+    elif category in ["Theft / Robbery", "Assault", "Harassment / Threat"]:
+        examples = "witness statements, CCTV footage if available, photographs of injuries or scene, medical reports if injured, FIR copy if already filed"
+    elif category == "Cyber crime":
+        examples = "screenshots of fraudulent messages, bank transaction details, account statements, email headers, chat logs, UPI transaction receipts"
+    elif category in ["Salary / Employment dispute", "Workplace Complaints"]:
+        examples = "appointment letter, salary slips, bank statements showing salary, employment contract, email correspondence with employer"
+    elif category == "Banking issue":
+        examples = "bank statements, transaction SMS, passbook entries, loan agreement, email/letter from bank, cheque copies"
+    elif category == "Insurance dispute":
+        examples = "insurance policy copy, premium payment receipts, claim forms, rejection letter, correspondence with insurance company"
+    elif category in ["Property dispute", "Landlord / Tenant dispute"]:
+        examples = "sale deed, rental agreement, rent receipts, property tax receipts, possession documents, photographs"
+    elif category == "RTI Application":
+        examples = "previous correspondence with department if any, copies of earlier applications, proof of fees paid"
+    elif category == "Cheating / Fraud":
+        examples = "written agreement, payment receipts, bank transfer details, WhatsApp/SMS conversations, witness statements"
+    else:
+        examples = "receipts, written agreements, photographs, email/SMS correspondence, witness contact information"
+    
+    return {
+        "key": "evidence_available",
+        "label": "Evidence Available",
+        "question": f"{base_q} For this type of case, relevant evidence includes: {examples}."
+    }
+
 def classify_and_plan_node(state: LegalState):
     messages        = state.get("messages", [])
     collected_facts = dict(state.get("collected_facts") or {})
@@ -189,6 +228,20 @@ def classify_and_plan_node(state: LegalState):
     turn_count      = (state.get("turn_count") or 0) + 1
     last_user_msg   = messages[-1].content.strip() if messages else ""
     lower_msg       = last_user_msg.lower()
+
+    # ── Pre-fill facts injected by Java backend (phone number from auth token) ────
+    if last_user_msg.startswith("__PREFILL__"):
+        prefill_part, _, actual_msg = last_user_msg.partition(" || ")
+        for token in prefill_part.replace("__PREFILL__", "").split():
+            if "=" in token:
+                k, v = token.split("=", 1)
+                k, v = k.strip(), v.strip()
+                if is_real_value(v) and k not in collected_facts:
+                    collected_facts[k] = v
+                    if k not in answered_keys:
+                        answered_keys.append(k)
+        last_user_msg = actual_msg.strip()
+        lower_msg     = last_user_msg.lower()
 
     # ── Evidence upload ───────────────────────────────────────────────────
     if lower_msg.startswith("i have uploaded evidence:"):
@@ -236,7 +289,7 @@ A user described their legal problem. Do the following:
 
 1. Classify into ONE of:
    Theft / Robbery | Assault | Cyber crime | Consumer complaint |
-   Salary / Employment dispute | Property dispute | Harassment / Threat |
+   Salary / Employment dispute | Property dispute | Landlord / Tenant dispute | Harassment / Threat |
    Cheating / Fraud | Family / Matrimonial | Banking issue |
    RTI Application | Insurance dispute | Other civil complaint
 
@@ -247,16 +300,12 @@ A user described their legal problem. Do the following:
 
 3. Design a CASE-SPECIFIC interview plan — 4 to 7 questions for THIS exact problem.
    RULES:
-   - THEFT / ROBBERY: what was stolen (make/model/reg if vehicle), date+time (combined one question),
-     exact location, how discovered, cards/IDs stolen, any reporting already done.
-   - CYBER CRIME: transaction date+time (one question), amount, card/account type,
-     how fraud occurred, digital evidence available.
-   - CONSUMER: product/service name, purchase date, exact defect, seller name, refund attempt.
-   - EMPLOYMENT: employer name, issue type, dates, HR escalation, any written proof.
-   - PROPERTY/RENT: property address, landlord name, specific dispute, rent amount.
+   - Identify the EXACT core facts needed for the specific type of legal document being requested.
+   - For example: if property/tenant, ask about agreements, dates, landlords, amounts. If a loan, ask dates, amounts, proofs. If theft, ask what/when/where. If consumer, ask product/seller/defect.
+   - You must DYNAMICALLY generate precise questions tailored to the exact situation described by the user.
    - COMBINE paired facts into ONE question (e.g. date + time → one key).
    - NEVER ask: suspect description, CCTV availability, police station name, whether FIR filed.
-   - DO NOT include address/location questions — those are handled by PERSONAL_KEYS.
+   - DO NOT include general address/location/personal/name questions — those are ALWAYS handled automatically by our PERSONAL_KEYS. Focus ONLY on the incident/issue facts.
 
 4. Extract facts ALREADY clearly stated in the user message.
    NEVER extract personal info: full_name, phone, address, city, state.
@@ -319,9 +368,103 @@ Return valid JSON only. No markdown.
         category = data.get("category", "Other civil complaint")
         plan     = list(data.get("interview_plan", []))
 
-        # Strip personal keys from LLM plan, append fixed personal keys at end
+        # ═══ Add authority-specific location questions based on category ═══
+
+        # For criminal complaints → ask for police station
+        if category in [
+            "Theft / Robbery", 
+            "Assault", 
+            "Harassment / Threat", 
+            "Cheating / Fraud",
+            "Cyber crime"
+        ]:
+            plan.append({
+                "key": "police_station_name",
+                "label": "Police Station Jurisdiction",
+                "question": "Which police station has jurisdiction over your area? If unsure, please mention your locality name. (Example: Anna Nagar Police Station, Chennai OR just 'Anna Nagar, Chennai')"
+            })
+
+        # For consumer complaints → ask for seller details and forum location
+        elif category == "Consumer complaint":
+            plan.append({
+                "key": "seller_name_location",
+                "label": "Seller/Company Name and Location",
+                "question": "What is the complete name and location of the seller or company you are complaining about? (Example: XYZ Electronics, T. Nagar, Chennai)"
+            })
+            plan.append({
+                "key": "consumer_forum_district",
+                "label": "Your District for Consumer Forum",
+                "question": "Which district do you live in? Consumer complaints are typically filed in your district's consumer forum. (Example: Salem District, Tamil Nadu)"
+            })
+
+        # For banking complaints → ask for branch details
+        elif category == "Banking issue":
+            plan.append({
+                "key": "bank_branch_details",
+                "label": "Bank Branch Name and Location",
+                "question": "Which bank branch are you dealing with? Please provide the complete branch name and location. (Example: State Bank of India, Main Branch, T. Nagar, Chennai - 600017)"
+            })
+
+        # For insurance complaints → ask for office/branch
+        elif category == "Insurance dispute":
+            plan.append({
+                "key": "insurance_office_location",
+                "label": "Insurance Company Office",
+                "question": "Which insurance company office or branch are you dealing with? Provide the office name and location. (Example: LIC Branch Office, Anna Salai, Chennai)"
+            })
+
+        # For employment/workplace → ask for employer details
+        elif category == "Salary / Employment dispute":
+            plan.append({
+                "key": "employer_name_address",
+                "label": "Employer Name and Office Address",
+                "question": "What is your employer's full company name and complete office address?"
+            })
+
+        # For property disputes → ask for property location
+        elif category == "Property dispute":
+            plan.append({
+                "key": "property_exact_location",
+                "label": "Property Location",
+                "question": "What is the exact location/address of the disputed property? Include survey numbers if available."
+            })
+
+        # For landlord/tenant → ask for property address and landlord name
+        elif category == "Landlord / Tenant dispute":
+            plan.append({
+                "key": "rental_property_address",
+                "label": "Rental Property Address",
+                "question": "What is the complete address of the rental property in question?"
+            })
+            plan.append({
+                "key": "other_party_name",
+                "label": "Landlord / Other Party Name",
+                "question": "What is the full name of the landlord (or the other party in this dispute)?"
+            })
+
+        # For property disputes → ask for the other party name (builder, neighbour, etc.)
+        elif category == "Property dispute":
+            plan.append({
+                "key": "other_party_name",
+                "label": "Builder / Other Party Name",
+                "question": "What is the full name of the builder or the other party involved in this dispute? (e.g., ABC Builders Pvt. Ltd.)"
+            })
+
+        # For RTI applications → ask for department/office
+        elif category == "RTI Application":
+            plan.append({
+                "key": "rti_department_name",
+                "label": "Government Department/Office",
+                "question": "Which government department or office are you seeking information from? Provide the complete name. (Example: Revenue Department, Collectorate Office, Salem District)"
+            })
+
+        # Strip personal keys from LLM plan
         plan = [s for s in plan if s.get("key") not in PERSONAL_KEY_SET]
-        plan += PERSONAL_KEYS
+        # Also remove evidence_available if LLM included it (we add our own below)
+        plan = [s for s in plan if s.get("key") != "evidence_available"]
+        # Always append: evidence question → then personal keys
+        evidence_q = get_evidence_question(category)
+        plan += [evidence_q] + PERSONAL_KEYS
 
         # Deduplicate
         seen, deduped = set(), []
@@ -402,6 +545,40 @@ Return JSON only:
         candidate if is_real_value(candidate)
         else ("Not available" if lower_msg in SKIP_VALUES else last_user_msg[:300])
     )
+
+    # Validate phone number
+    if current_q_key == "user_phone":
+        phone_value = str(collected_facts.get("user_phone", "")).strip()
+        # Check if it's a valid 10-digit Indian phone number
+        if not re.match(r'^\d{10}$', phone_value):
+            # Invalid - re-ask
+            return {
+                "generated_content": "Please provide a valid 10-digit mobile number (Example: 9876543210)",
+                "collected_facts": collected_facts,
+                "interview_plan": interview_plan,
+                "answered_keys": [k for k in answered_keys if k != "user_phone"],
+                "current_question_key": "user_phone",
+                "next_step": "ask_question",
+                "stage": "collecting",
+                "turn_count": turn_count,
+            }
+
+    # Validate evidence input
+    if current_q_key == "evidence_available":
+        evidence_value = str(collected_facts.get("evidence_available", "")).strip().upper()
+        
+        # If user just said YES/NO/NONE without describing actual evidence
+        if evidence_value in ["YES", "NO", "NONE", "NOTHING", "NOT AVAILABLE", "N/A", "NA"]:
+            return {
+                "generated_content": "Please describe the specific evidence you have. For example: 'Purchase receipt from XYZ Store dated 1 March 2024, warranty card, photographs of the defect, email exchange with seller'. If you have no evidence, say 'I have no documentary evidence at this time'.",
+                "collected_facts": {k: v for k, v in collected_facts.items() if k != "evidence_available"},
+                "interview_plan": interview_plan,
+                "answered_keys": [k for k in answered_keys if k != "evidence_available"],
+                "current_question_key": "evidence_available",
+                "next_step": "ask_question",
+                "stage": "collecting",
+                "turn_count": turn_count,
+            }
 
     if current_q_key not in answered_keys:
         answered_keys.append(current_q_key)
@@ -724,10 +901,14 @@ def process_message(thread_id: str, user_input: str) -> dict:
 
     current_state = graph_app.get_state(config).values
     current_stage = current_state.get("stage", "")
-    input_hash    = hashlib.md5(user_input.encode()).hexdigest()
+    current_q_key = current_state.get("current_question_key", "")
+    input_hash    = hashlib.md5((user_input + current_q_key).encode()).hexdigest()
     last_hash     = current_state.get("last_input_hash", "")
 
-    # Skip dedup when in confirming stage — "yes" must always be processed
+    # Dedup: only skip if the same answer was already processed for the SAME question.
+    # Including current_question_key in the hash means identical answers to DIFFERENT
+    # questions (e.g. two consecutive "No" answers) are never skipped.
+    # Never dedup when in confirming/done stage.
     if (input_hash == last_hash) and current_stage not in ("confirming", "done", ""):
         return _build_response(current_state)
 
