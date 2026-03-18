@@ -293,6 +293,14 @@ A user described their legal problem. Do the following:
    Cheating / Fraud | Family / Matrimonial | Banking issue |
    RTI Application | Insurance dispute | Other civil complaint
 
+   IMPORTANT CLASSIFICATION RULES:
+   - Threatening phone calls, messages, or in-person threats demanding money or causing fear = Harassment / Threat
+   - Extortion, blackmail, criminal intimidation = Harassment / Threat
+   - Online fraud, UPI fraud, phishing = Cyber crime (NOT Banking issue)
+   - Defective product or service = Consumer complaint (NOT Cheating / Fraud)
+   - Salary not paid by employer = Salary / Employment dispute (NOT Cheating / Fraud)
+   - NEVER classify threatening calls as "Other civil complaint"
+
 2. Safety routing:
    - "refuse"             → immediate life threat or illegal/unethical request
    - "refer_professional" → outside India, serious criminal liability, complex litigation

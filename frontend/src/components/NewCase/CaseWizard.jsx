@@ -1,36 +1,26 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { sessionAPI, documentAPI } from '../../utils/api';
 import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import VoiceRecorder from './VoiceRecorder';
+import { useAuth } from '../../context/AuthContext';
+import logo from '/satta_vizhi_logo.png';
 import './CaseWizard.css';
 
 /* ─────────────────────────────────────────────
    Helpers
 ───────────────────────────────────────────── */
-
 const KEY_LABELS = {
     complainant_name: 'Complainant Name',
     complainant_address: 'Address',
-    complainant_city_state: 'City / State',
-    complainant_phone: 'Phone Number',
     incident_date: 'Date of Incident',
-    incident_time: 'Time of Incident',
     incident_location: 'Location',
-    incident_description: 'Description',
-    accused_description: 'Accused Description',
-    property_details: 'Property / Loss Details',
-    evidence_details: 'Evidence Available',
-    police_status: 'Police Complaint Status',
+    evidence_details: 'Evidence',
     police_station_name: 'Police Station',
-    // legacy keys (backward compat)
-    user_full_name: 'Complainant Name',
-    user_address: 'Address',
-    user_city_state: 'City / State',
-    user_phone: 'Phone Number',
-    evidence_available: 'Evidence Available',
+    user_full_name: 'Name',
+    user_phone: 'Phone',
+    evidence_available: 'Evidence',
 };
-
 const labelFor = (key) =>
     KEY_LABELS[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
@@ -39,36 +29,36 @@ const isRealValue = (v) =>
         String(v).toLowerCase().trim()
     );
 
+const formatDate = (iso) => {
+    if (!iso) return '';
+    try { return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }); }
+    catch { return ''; }
+};
+
+const intentLabel = (intent) => {
+    if (!intent) return 'Legal Case';
+    // intent format: "Category — description..."
+    const part = intent.split('—')[0].trim();
+    return part.length > 30 ? part.substring(0, 30) + '…' : part;
+};
+
 /* ─────────────────────────────────────────────
-   MessageBubble — renders \n as proper line breaks
+   MessageBubble
 ───────────────────────────────────────────── */
 function MessageBubble({ msg }) {
     const lines = String(msg.text).split('\n');
     return (
-        <div className={`message ${msg.sender}`}>
-            {lines.map((line, i) => (
-                <span key={i}>
-                    {line}
-                    {i < lines.length - 1 && <br />}
-                </span>
-            ))}
-        </div>
-    );
-}
-
-/* ─────────────────────────────────────────────
-   NextSteps
-───────────────────────────────────────────── */
-function NextStepsMessage({ steps }) {
-    if (!steps || steps.length === 0) return null;
-    return (
-        <div className="message system next-steps-message">
-            <div className="next-steps-title">What to do next:</div>
-            <ol className="next-steps-list">
-                {steps.map((step, i) => (
-                    <li key={i}>{step}</li>
+        <div className={`cw-message cw-msg-${msg.sender}`}>
+            {msg.sender === 'system' && (
+                <div className="cw-avatar">
+                    <img src={logo} alt="Satta Vizhi" className="cw-avatar-img" />
+                </div>
+            )}
+            <div className="cw-bubble">
+                {lines.map((line, i) => (
+                    <span key={i}>{line}{i < lines.length - 1 && <br />}</span>
                 ))}
-            </ol>
+            </div>
         </div>
     );
 }
@@ -78,128 +68,40 @@ function NextStepsMessage({ steps }) {
 ───────────────────────────────────────────── */
 function DocumentPreviewModal({ documentPayload, onDownload, onClose, loading }) {
     if (!documentPayload) return null;
-
     const english = documentPayload.english_content || documentPayload.user_language_content || '';
     const userLang = documentPayload.user_language_content || '';
     const showBoth = userLang && userLang !== english;
 
     return (
-        <div style={{
-            position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-            backgroundColor: 'rgba(10, 15, 30, 0.85)', display: 'flex',
-            justifyContent: 'center', alignItems: 'center', zIndex: 2000,
-            backdropFilter: 'blur(6px)', padding: '1rem',
-        }}>
-            <div style={{
-                background: 'var(--card-bg, #1e293b)', borderRadius: '14px',
-                border: '1px solid var(--glass-border, rgba(255,255,255,0.1))',
-                boxShadow: '0 30px 60px rgba(0,0,0,0.6)',
-                width: '100%', maxWidth: '820px', maxHeight: '90vh',
-                display: 'flex', flexDirection: 'column', overflow: 'hidden',
-            }}>
-                {/* Header */}
-                <div style={{
-                    padding: '1.2rem 1.5rem', borderBottom: '1px solid var(--glass-border, rgba(255,255,255,0.1))',
-                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                    background: 'rgba(99,102,241,0.08)',
-                }}>
+        <div className="cw-modal-overlay">
+            <div className="cw-modal">
+                <div className="cw-modal-header">
                     <div>
-                        <h2 style={{ margin: 0, fontSize: '1.1rem', color: 'var(--text-primary, #e2e8f0)' }}>
-                            📄 Document Preview
-                        </h2>
-                        <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: 'var(--text-secondary, #94a3b8)' }}>
-                            Review your document before downloading
-                        </p>
+                        <h2>📄 Document Preview</h2>
+                        <p>Review your document before downloading</p>
                     </div>
-                    <button onClick={onClose} style={{
-                        background: 'transparent', border: 'none', color: 'var(--text-secondary, #94a3b8)',
-                        fontSize: '1.4rem', cursor: 'pointer', lineHeight: 1,
-                    }}>✕</button>
+                    <button className="cw-modal-close" onClick={onClose}>✕</button>
                 </div>
-
-                {/* Scrollable content */}
-                <div style={{ overflowY: 'auto', padding: '1.5rem', flex: 1 }}>
-
-                    {/* English Version */}
-                    <div style={{ marginBottom: showBoth ? '2rem' : 0 }}>
-                        {showBoth && (
-                            <div style={{
-                                fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em',
-                                color: '#6366f1', marginBottom: '0.8rem', textTransform: 'uppercase',
-                            }}>English Version</div>
-                        )}
-                        <pre style={{
-                            background: 'rgba(255,255,255,0.04)', borderRadius: '8px',
-                            padding: '1.2rem', fontFamily: "'Courier New', monospace",
-                            fontSize: '0.82rem', lineHeight: 1.7,
-                            color: 'var(--text-primary, #e2e8f0)',
-                            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                            border: '1px solid rgba(255,255,255,0.06)',
-                            margin: 0,
-                        }}>
-                            {english || '(No content)'}
-                        </pre>
-                    </div>
-
-                    {/* Tamil / User-language Version */}
+                <div className="cw-modal-body">
+                    {showBoth && <div className="cw-lang-badge english">English Version</div>}
+                    <pre className="cw-doc-pre">{english || '(No content)'}</pre>
                     {showBoth && (
-                        <div>
-                            <div style={{
-                                fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em',
-                                color: '#22c55e', marginBottom: '0.8rem', textTransform: 'uppercase',
-                            }}>Tamil / Regional Version</div>
-                            <pre style={{
-                                background: 'rgba(255,255,255,0.04)', borderRadius: '8px',
-                                padding: '1.2rem', fontFamily: "'Noto Sans Tamil', 'Courier New', monospace",
-                                fontSize: '0.88rem', lineHeight: 1.9,
-                                color: 'var(--text-primary, #e2e8f0)',
-                                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                                border: '1px solid rgba(255,255,255,0.06)',
-                                margin: 0,
-                            }}>
-                                {userLang}
-                            </pre>
-                        </div>
+                        <>
+                            <div className="cw-lang-badge regional" style={{ marginTop: '1.5rem' }}>Regional Version</div>
+                            <pre className="cw-doc-pre cw-doc-pre-regional">{userLang}</pre>
+                        </>
                     )}
-
-                    {/* Disclaimer box */}
                     {documentPayload.disclaimer_en && (
-                        <div style={{
-                            marginTop: '1.5rem', padding: '1rem',
-                            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
-                            borderRadius: '8px', fontSize: '0.78rem', color: '#fca5a5', lineHeight: 1.6,
-                        }}>
+                        <div className="cw-disclaimer-box">
                             <strong>⚠ DISCLAIMER</strong><br />
                             {documentPayload.disclaimer_en}
                         </div>
                     )}
                 </div>
-
-                {/* Footer buttons */}
-                <div style={{
-                    padding: '1rem 1.5rem', borderTop: '1px solid var(--glass-border, rgba(255,255,255,0.1))',
-                    display: 'flex', gap: '0.8rem', justifyContent: 'flex-end',
-                    background: 'rgba(99,102,241,0.05)',
-                }}>
-                    <button
-                        onClick={onClose}
-                        style={{
-                            padding: '0.6rem 1.4rem', borderRadius: '8px', cursor: 'pointer',
-                            background: 'transparent', border: '1px solid rgba(255,255,255,0.2)',
-                            color: 'var(--text-secondary, #94a3b8)', fontSize: '0.9rem',
-                        }}>
-                        ✕ Close
-                    </button>
-                    <button
-                        onClick={onDownload}
-                        disabled={loading}
-                        style={{
-                            padding: '0.6rem 1.6rem', borderRadius: '8px', cursor: 'pointer',
-                            background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                            border: 'none', color: '#fff', fontWeight: 600, fontSize: '0.9rem',
-                            opacity: loading ? 0.6 : 1,
-                        }}>
-                        {loading ? 'Generating PDF…' : '⬇ Download PDF'}
+                <div className="cw-modal-footer">
+                    <button className="cw-btn cw-btn-ghost" onClick={onClose}>✕ Close</button>
+                    <button className="cw-btn cw-btn-primary" onClick={onDownload} disabled={loading}>
+                        {loading ? 'Generating…' : '⬇ Download PDF'}
                     </button>
                 </div>
             </div>
@@ -208,103 +110,194 @@ function DocumentPreviewModal({ documentPayload, onDownload, onClose, loading })
 }
 
 /* ─────────────────────────────────────────────
-   Component
+   Main CaseWizard
 ───────────────────────────────────────────── */
-
 function CaseWizard() {
     const navigate = useNavigate();
+    const location  = useLocation();
+    const { user, logout } = useAuth();
 
+    // ── Chat state ──────────────────────────────
     const [messages, setMessages] = useState([{
-        id: 'greeting',
-        sender: 'system',
-        text: 'Vanakkam! I am your AI Legal Document Assistant. I am not a lawyer and I do not give legal advice — I only help you prepare documents.\n\nPlease describe your legal issue in your own words.',
+        id: 'greeting', sender: 'system', type: 'normal',
+        text: 'Vanakkam! I am your AI Legal Document Assistant.\nI am not a lawyer and I do not give legal advice — I only help you prepare documents.\n\nPlease describe your legal issue in your own words.',
     }]);
-
-    const [inputText, setInputText] = useState('');
-    const [sessionId, setSessionId] = useState(null);
-    const [loading, setLoading] = useState(false);
-    const [entities, setEntities] = useState({});
+    const [inputText, setInputText]   = useState('');
+    const [sessionId, setSessionId]   = useState(null);
+    const [loading, setLoading]       = useState(false);
+    const [entities, setEntities]     = useState({});
     const [latestData, setLatestData] = useState(null);
     const [isComplete, setIsComplete] = useState(false);
     const [documentPayload, setDocumentPayload] = useState(null);
-    const [nextSteps, setNextSteps] = useState([]);
-    const [isUploading, setIsUploading] = useState(false);
-    const [showPreview, setShowPreview] = useState(false);
+    const [isUploading, setIsUploading]         = useState(false);
+    const [showPreview, setShowPreview]         = useState(false);
+    const [currentIntent, setCurrentIntent]     = useState('');
+    // Stores the full conversation per session: { [sessionId]: messages[] }
+    const [sessionChats, setSessionChats] = useState({});
+
+    // ── Sidebar state ───────────────────────────
+    const [sessions, setSessions]               = useState([]);
+    const [sidebarLoading, setSidebarLoading]   = useState(true);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
     const messagesEndRef = useRef(null);
     useEffect(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), [messages]);
 
     useEffect(() => {
-        if (!localStorage.getItem('token')) {
-            alert('Please log in to continue.');
-            navigate('/login');
-        }
-    }, [navigate]);
+        if (!localStorage.getItem('token')) { navigate('/login'); return; }
+        loadSessions();
+    }, []);
 
-    /* ── apply an API response to state ─────────── */
+    // ── Auto-open session passed from Dashboard (router state) ────────────
+    useEffect(() => {
+        if (location.state?.session) {
+            openSession(location.state.session);
+            // Clear the state so navigating back doesn’t re-open it
+            navigate('/new-case', { replace: true, state: {} });
+        }
+    }, [location.state]);
+
+    // ── Save current messages to sessionChats whenever they change ──
+    useEffect(() => {
+        if (sessionId) {
+            setSessionChats(prev => ({ ...prev, [sessionId]: messages }));
+        }
+    }, [messages, sessionId]);
+
+    // ── Cache documentPayload in sessionStorage whenever it changes ──
+    useEffect(() => {
+        if (sessionId && documentPayload && !documentPayload.raw) {
+            try {
+                sessionStorage.setItem(`doc_${sessionId}`, JSON.stringify(documentPayload));
+            } catch {}
+        }
+    }, [documentPayload, sessionId]);
+
+    const loadSessions = async () => {
+        try {
+            setSidebarLoading(true);
+            const res = await sessionAPI.getSessions();
+            const sorted = (res.data || []).sort(
+                (a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt)
+            );
+            setSessions(sorted);
+        } catch (e) {
+            console.error('Failed to load sessions', e);
+        } finally {
+            setSidebarLoading(false);
+        }
+    };
+
+    // ── Start a fresh chat ──────────────────────
+    const startNewChat = () => {
+        const greeting = {
+            id: 'greeting', sender: 'system', type: 'normal',
+            text: 'Starting a new case. Please describe your legal issue in your own words.',
+        };
+        setMessages([greeting]);
+        setSessionId(null);
+        setIsComplete(false);
+        setDocumentPayload(null);
+        setEntities({});
+        setLatestData(null);
+        setInputText('');
+        setCurrentIntent('');
+    };
+
+    // ── Open an existing session from sidebar ───
+    const openSession = (s) => {
+        setSessionId(s.sessionId);
+        setCurrentIntent(s.detectedIntent || '');
+        setEntities({});
+        setLatestData({ readinessScore: s.readinessScore });
+
+        const isCompleted = s.status === 'COMPLETED';
+        setIsComplete(isCompleted);
+
+        // Restore cached document payload from sessionStorage if available
+        let cachedPayload = null;
+        try {
+            const cached = sessionStorage.getItem(`doc_${s.sessionId}`);
+            if (cached) {
+                cachedPayload = JSON.parse(cached);
+                setDocumentPayload(cachedPayload);
+            } else {
+                setDocumentPayload(null);
+            }
+        } catch { setDocumentPayload(null); }
+
+        if (sessionChats[s.sessionId]) {
+            // Restore full chat from memory
+            setMessages(sessionChats[s.sessionId]);
+        } else if (isCompleted) {
+            // Completed session
+            const payloadNote = cachedPayload
+                ? '\n\nUse the buttons below to preview or re-download your document.'
+                : '\n\nThe document payload is not cached in this browser. Start a new case to regenerate.';
+            setMessages([{
+                id: 'restored', sender: 'system', type: 'normal',
+                text: `✅ Document generated: ${intentLabel(s.detectedIntent)}${payloadNote}`,
+            }]);
+        } else {
+            // Active in-progress session
+            setMessages([{
+                id: 'restored', sender: 'system', type: 'normal',
+                text: `Session restored: ${intentLabel(s.detectedIntent)}\n⏳ In progress\n\nContinue from where you left off — type your next answer below.`,
+            }]);
+        }
+    };
+
+    // ── Apply API response ──────────────────────
     const applyResponse = (data) => {
         setLatestData(data);
         setEntities(data.extractedEntities || {});
+        if (data.detectedIntent) setCurrentIntent(data.detectedIntent);
 
         if (data.complete && data.documentPayload) {
-            try {
-                const parsed = JSON.parse(data.documentPayload);
-                setDocumentPayload(parsed);
-                const steps = parsed.next_steps || data.nextSteps || [];
-                setNextSteps(steps);
-            } catch {
-                setDocumentPayload({ raw: data.documentPayload });
-            }
+            let parsed = null;
+            try { parsed = JSON.parse(data.documentPayload); }
+            catch { parsed = { raw: data.documentPayload }; }
+            setDocumentPayload(parsed);
             setIsComplete(true);
-
-            addSystemMessage(
-                data.message ||
-                'Your legal document has been prepared. You can preview and download it below.'
-            );
-
-            // next_steps are stored in state but NOT shown in chat
-            // They are available in the document payload for the dashboard
-
+            // Cache in sessionStorage so we can restore it when the session is reopened
+            try {
+                // sessionId is in React state — use a ref trick via closure capture
+                // We also store under data.sessionId if available
+                const sid = data.sessionId || sessionId;
+                if (sid) sessionStorage.setItem(`doc_${sid}`, data.documentPayload);
+            } catch {}
+            addMsg('system', data.message || 'Your legal document has been prepared. You can preview and download it below.');
+            loadSessions();
         } else if (data.message) {
-            addSystemMessage(data.message);
+            addMsg('system', data.message);
         }
     };
 
-    const addSystemMessage = (text) => {
-        setMessages(prev => [
-            ...prev,
-            { id: Date.now() + Math.random(), sender: 'system', text, type: 'normal' }
-        ]);
-    };
+    const addMsg = (sender, text) => setMessages(prev => [
+        ...prev,
+        { id: Date.now() + Math.random(), sender, text, type: 'normal' }
+    ]);
 
-    const addNextStepsMessage = (steps) => {
-        setMessages(prev => [
-            ...prev,
-            { id: Date.now() + Math.random(), sender: 'system', text: '', type: 'next_steps', steps }
-        ]);
-    };
-
-    /* ── send text ─────────────────────────────── */
+    // ── Send message ────────────────────────────
     const handleSend = async () => {
         const text = inputText.trim();
         if (!text || loading) return;
-
-        setMessages(prev => [...prev, { id: Date.now(), sender: 'user', text, type: 'normal' }]);
+        addMsg('user', text);
         setInputText('');
         setLoading(true);
-
         try {
-            let response;
+            let res;
             if (!sessionId) {
-                response = await sessionAPI.start(text);
-                setSessionId(response.data.sessionId);
+                res = await sessionAPI.start(text);
+                setSessionId(res.data.sessionId);
+                loadSessions();
             } else {
-                response = await sessionAPI.answer(sessionId, text);
+                res = await sessionAPI.answer(sessionId, text);
             }
-            applyResponse(response.data);
+            applyResponse(res.data);
         } catch (err) {
             console.error(err);
-            addSystemMessage("I'm sorry, I encountered an error. Please try again.");
+            addMsg('system', "I'm sorry, I encountered an error. Please try again.");
         } finally {
             setLoading(false);
         }
@@ -314,16 +307,13 @@ function CaseWizard() {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
     };
 
-    /* ── generate + download PDF ─────────────── */
+    // ── Download PDF ────────────────────────────
     const generateDocument = async () => {
-        if (!documentPayload) {
-            alert('No document data available. Please complete the interview first.');
-            return;
-        }
+        if (!documentPayload) return;
         try {
             setLoading(true);
-            const response = await documentAPI.generateBilingual(documentPayload);
-            const blob = new Blob([response.data], { type: 'application/pdf' });
+            const res = await documentAPI.generateBilingual(documentPayload);
+            const blob = new Blob([res.data], { type: 'application/pdf' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -331,15 +321,11 @@ function CaseWizard() {
             a.click();
             window.URL.revokeObjectURL(url);
             setShowPreview(false);
-        } catch (err) {
-            console.error(err);
-            alert('Error generating PDF. Please try again.');
-        } finally {
-            setLoading(false);
-        }
+        } catch { alert('Error generating PDF. Please try again.'); }
+        finally { setLoading(false); }
     };
 
-    /* ── file upload ────────────────────────── */
+    // ── File upload ─────────────────────────────
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file || !sessionId) return;
@@ -347,93 +333,72 @@ function CaseWizard() {
         const formData = new FormData();
         formData.append('file', file);
         try {
-            const response = await sessionAPI.uploadEvidence(sessionId, formData);
-            applyResponse(response.data);
-        } catch (err) {
-            console.error('Upload failed', err);
-            addSystemMessage('File upload failed. Please try again.');
-        } finally {
-            setIsUploading(false);
-        }
+            const res = await sessionAPI.uploadEvidence(sessionId, formData);
+            applyResponse(res.data);
+        } catch { addMsg('system', 'File upload failed. Please try again.'); }
+        finally { setIsUploading(false); }
     };
 
-    /* ── voice input ─────────────────────────── */
+    // ── Voice ───────────────────────────────────
     const handleVoiceInput = async (audioFile) => {
         setLoading(true);
-        addSystemMessage('🎤 Processing voice input...');
+        addMsg('system', '🎤 Processing voice input...');
         try {
-            const transcript = window.prompt(
-                'Please type the transcript of your voice input so it can be reviewed in text before submission:'
-            );
-            if (!transcript || !transcript.trim()) {
-                addSystemMessage('Voice input was not submitted. Please provide transcript text and try again.');
+            const transcript = window.prompt('Type the transcript of your voice input:');
+            if (!transcript?.trim()) { addMsg('system', 'Voice input was not submitted.'); return; }
+            const confirmed = window.prompt(`Transcript:\n${transcript}\n\nType YES to confirm.`);
+            if ((confirmed || '').trim().toUpperCase() !== 'YES') {
+                addMsg('system', 'Transcript not confirmed. Voice input cancelled.');
                 return;
             }
-
-            const confirmText = window.prompt(
-                `Transcript captured:\n\n${transcript}\n\nType YES to confirm this transcript exactly as shown.`
-            );
-            const transcriptConfirmed = (confirmText || '').trim().toUpperCase() === 'YES';
-            if (!transcriptConfirmed) {
-                addSystemMessage('Transcript not confirmed. Voice input was not submitted.');
-                return;
-            }
-
             const formData = new FormData();
             formData.append('audio', audioFile);
             formData.append('transcript', transcript.trim());
             formData.append('language', 'en-IN');
             formData.append('transcriptConfirmed', 'true');
-
             let sid = sessionId;
             if (!sid) {
                 const startRes = await sessionAPI.start('Voice input');
                 sid = startRes.data.sessionId;
                 setSessionId(sid);
             }
-
-            const response = await sessionAPI.answerVoice(sid, formData);
-            setMessages(prev => prev.filter(m => m.text !== '🎤 Processing voice input...'));
-            applyResponse(response.data);
-        } catch (err) {
-            console.error(err);
-            addSystemMessage('Error processing voice input. Please try again or type your answer.');
-        } finally {
+            const res = await sessionAPI.answerVoice(sid, formData);
+            applyResponse(res.data);
+        } catch { addMsg('system', 'Error processing voice input. Please type your answer instead.'); }
+        finally {
             setMessages(prev => prev.filter(m => m.text !== '🎤 Processing voice input...'));
             setLoading(false);
         }
     };
 
-    /* ── delete session ──────────────────────── */
-    const handleDeleteCase = async () => {
+    // ── Delete current session ──────────────────
+    const handleDeleteSession = async () => {
         if (!sessionId) return;
-        if (!window.confirm('Delete this session permanently? This cannot be undone.')) return;
+        if (!window.confirm('Delete this session? This cannot be undone.')) return;
         try {
             await sessionAPI.delete(sessionId);
-            alert('Session deleted.');
-            window.location.reload();
-        } catch (err) {
-            console.error(err);
-            alert('Failed to delete session.');
-        }
+            startNewChat();
+            loadSessions();
+        } catch { alert('Failed to delete session.'); }
     };
 
-    /* ── go to dashboard (preserves generated case) */
-    const handleGoToDashboard = () => {
-        // The case was already saved server-side during document generation.
-        // Navigate directly — the dashboard will fetch and show it.
-        navigate('/dashboard');
+    // ── Delete sidebar session ──────────────────
+    const handleDeleteSidebarSession = async (e, sid) => {
+        e.stopPropagation();
+        if (!window.confirm('Delete this case?')) return;
+        try {
+            await sessionAPI.delete(sid);
+            setSessions(prev => prev.filter(s => s.sessionId !== sid));
+            setSessionChats(prev => { const c = { ...prev }; delete c[sid]; return c; });
+            if (sid === sessionId) startNewChat();
+        } catch { alert('Failed to delete.'); }
     };
 
     const realEntities = Object.entries(entities).filter(([, v]) => isRealValue(v));
 
-    /* ─────────────────────────────────────────────
-       RENDER
-    ───────────────────────────────────────────── */
     return (
-        <div className="wizard-container">
+        <div className="cw-root">
 
-            {/* Preview Modal */}
             {showPreview && (
                 <DocumentPreviewModal
                     documentPayload={documentPayload}
@@ -443,162 +408,189 @@ function CaseWizard() {
                 />
             )}
 
-            {/* Header */}
-            <div className="wizard-header">
-                <h1>AI Legal Document Assistant</h1>
-                <p className="wizard-subhead">Not a lawyer · India only · Documents for informational purposes</p>
-                <div style={{ position: 'absolute', right: '2rem', top: '1rem', display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                    {sessionId && !isComplete && (
-                        <button
-                            onClick={() => {
-                                if (window.confirm('Save this session and go to the dashboard? You can continue it later from there.')) {
-                                    navigate('/dashboard');
-                                }
-                            }}
-                            style={{ background: 'rgba(99,102,241,0.15)', border: '1px solid rgba(99,102,241,0.4)', color: '#818cf8', borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem' }}>
-                            💾 Save & Exit
-                        </button>
-                    )}
-                    {sessionId && (
-                        <button
-                            onClick={handleDeleteCase}
-                            style={{ background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.4)', color: '#ef4444', borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem' }}>
-                            🗑 Delete Session
-                        </button>
-                    )}
-                    <ThemeToggle />
-                </div>
-            </div>
+            {/* ═══ LEFT SIDEBAR ═══ */}
+            <aside className={`cw-sidebar ${sidebarCollapsed ? 'cw-sidebar-collapsed' : ''}`}>
 
-            {/* Main layout */}
-            <div className="chat-window">
+                {/* Brand + collapse */}
+                <div className="cw-sidebar-top">
+                    <div className="cw-sidebar-brand">
+                        <img src={logo} alt="logo" className="cw-brand-logo" />
+                        {!sidebarCollapsed && <span className="cw-brand-name">Satta Vizhi</span>}
+                        <button className="cw-collapse-btn"
+                            onClick={() => setSidebarCollapsed(p => !p)}
+                            title={sidebarCollapsed ? 'Expand' : 'Collapse'}>
+                            {sidebarCollapsed ? '›' : '‹'}
+                        </button>
+                    </div>
+
+                    <button className="cw-new-chat-btn" onClick={startNewChat} title="New Case">
+                        <span>✎</span>
+                        {!sidebarCollapsed && <span>New Case</span>}
+                    </button>
+                </div>
+
+                {/* Session list */}
+                {!sidebarCollapsed && (
+                    <div className="cw-session-list">
+                        {sidebarLoading ? (
+                            <div className="cw-sidebar-empty">Loading…</div>
+                        ) : sessions.length === 0 ? (
+                            <div className="cw-sidebar-empty">No previous cases</div>
+                        ) : (
+                            <>
+                                <div className="cw-session-group-label">Recent Cases</div>
+                                {sessions.map(s => (
+                                    <div
+                                        key={s.sessionId}
+                                        className={`cw-session-item ${s.sessionId === sessionId ? 'cw-session-active' : ''}`}
+                                        onClick={() => openSession(s)}
+                                        title={s.detectedIntent || 'Legal Case'}
+                                    >
+                                        <span className="cw-session-icon">
+                                            {s.status === 'COMPLETED' ? '✅' : '⏳'}
+                                        </span>
+                                        <div className="cw-session-info">
+                                            <div className="cw-session-title">{intentLabel(s.detectedIntent)}</div>
+                                            <div className="cw-session-date">{formatDate(s.updatedAt || s.createdAt)}</div>
+                                        </div>
+                                        <button
+                                            className="cw-session-del"
+                                            onClick={(e) => handleDeleteSidebarSession(e, s.sessionId)}
+                                            title="Delete">✕</button>
+                                    </div>
+                                ))}
+                            </>
+                        )}
+                    </div>
+                )}
+
+                {/* User info at bottom */}
+                {!sidebarCollapsed && (
+                    <div className="cw-sidebar-footer">
+                        <div className="cw-sidebar-user">
+                            <div className="cw-user-avatar">
+                                {(user?.fullName || 'U')[0].toUpperCase()}
+                            </div>
+                            <div className="cw-user-name">{user?.fullName || 'User'}</div>
+                        </div>
+                        <ThemeToggle />
+                    </div>
+                )}
+            </aside>
+
+            {/* ═══ MAIN AREA ═══ */}
+            <main className="cw-main">
+
+                {/* Top bar */}
+                <div className="cw-topbar">
+                    <div className="cw-topbar-title">
+                        {currentIntent ? intentLabel(currentIntent) : 'AI Legal Document Assistant'}
+                    </div>
+                    <div className="cw-topbar-actions">
+                        {sessionId && !isComplete && (
+                            <button className="cw-btn cw-btn-ghost cw-btn-sm"
+                                onClick={() => { if (window.confirm('Save and exit?')) navigate('/dashboard'); }}>
+                                💾 Save & Exit
+                            </button>
+                        )}
+                        {sessionId && (
+                            <button className="cw-btn cw-btn-danger cw-btn-sm" onClick={handleDeleteSession}>
+                                🗑
+                            </button>
+                        )}
+                        {/* Logout — prominent red button in top-right */}
+                        <button className="cw-logout-topbar" onClick={logout} title="Logout">
+                            ⏻ Logout
+                        </button>
+                    </div>
+                </div>
 
                 {/* Messages */}
-                <div className="messages-area">
-                    {messages.map(msg => (
-                        msg.type === 'next_steps'
-                            ? <NextStepsMessage key={msg.id} steps={msg.steps} />
-                            : <MessageBubble key={msg.id} msg={msg} />
-                    ))}
+                <div className="cw-messages">
+                    {messages.map(msg => <MessageBubble key={msg.id} msg={msg} />)}
 
                     {loading && (
-                        <div className="typing-indicator">
-                            <span className="dot" /><span className="dot" /><span className="dot" />
+                        <div className="cw-message cw-msg-system">
+                            <div className="cw-avatar">
+                                <img src={logo} alt="thinking" className="cw-avatar-img" />
+                            </div>
+                            <div className="cw-bubble cw-typing">
+                                <span className="cw-dot" /><span className="cw-dot" /><span className="cw-dot" />
+                            </div>
                         </div>
                     )}
-
                     <div ref={messagesEndRef} />
                 </div>
 
-                {/* Input / complete actions */}
+                {/* Facts strip */}
+                {realEntities.length > 0 && (
+                    <div className="cw-facts-strip">
+                        {realEntities.slice(0, 5).map(([key, value]) => (
+                            <span key={key} className="cw-fact-chip">
+                                <span className="cw-fact-key">{labelFor(key)}</span>
+                                <span className="cw-fact-val">
+                                    {String(value).length > 22 ? String(value).substring(0, 22) + '…' : value}
+                                </span>
+                            </span>
+                        ))}
+                        {realEntities.length > 5 && (
+                            <span className="cw-fact-more">+{realEntities.length - 5} more</span>
+                        )}
+                        {latestData?.readinessScore !== undefined && (
+                            <span className="cw-readiness-chip" style={{
+                                background: latestData.readinessScore >= 75 ? 'rgba(34,197,94,0.15)'
+                                    : latestData.readinessScore >= 40 ? 'rgba(234,179,8,0.15)' : 'rgba(239,68,68,0.15)',
+                                color: latestData.readinessScore >= 75 ? '#16a34a'
+                                    : latestData.readinessScore >= 40 ? '#b45309' : '#dc2626',
+                                border: '1px solid currentColor',
+                            }}>
+                                Evidence {latestData.readinessScore}/100
+                            </span>
+                        )}
+                    </div>
+                )}
+
+                {/* Input / complete */}
                 {isComplete ? (
-                    <div className="input-area complete-actions">
-                        {/* Preview button — prominent */}
-                        <button
-                            className="btn btn-primary"
-                            onClick={() => setShowPreview(true)}
-                            disabled={loading}
-                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            👁 Preview Document
+                    <div className="cw-complete-bar">
+                        <button className="cw-btn cw-btn-primary" onClick={() => setShowPreview(true)} disabled={loading}>
+                            👁 Preview
                         </button>
-                        {/* Download without preview */}
-                        <button
-                            className="btn btn-secondary"
-                            onClick={generateDocument}
-                            disabled={loading}
-                            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <button className="cw-btn cw-btn-secondary" onClick={generateDocument} disabled={loading}>
                             📄 Download PDF
                         </button>
-                        <button
-                            className="btn btn-secondary"
-                            onClick={handleGoToDashboard}>
-                            📊 Go to Dashboard
+                        <button className="cw-btn cw-btn-secondary" onClick={() => navigate('/dashboard')}>
+                            📊 Dashboard
                         </button>
-                        <button
-                            className="btn btn-ghost"
-                            onClick={() => {
-                                setMessages([{
-                                    id: 'greeting',
-                                    sender: 'system',
-                                    text: 'Starting a new case. Please describe your legal issue in your own words.',
-                                }]);
-                                setSessionId(null);
-                                setIsComplete(false);
-                                setDocumentPayload(null);
-                                setNextSteps([]);
-                                setEntities({});
-                                setLatestData(null);
-                                setInputText('');
-                            }}>
-                            ➕ Start New Case
+                        <button className="cw-btn cw-btn-ghost" onClick={startNewChat}>
+                            ✎ New Case
                         </button>
                     </div>
                 ) : (
-                    <div className="input-area">
-                        <label title="Upload evidence file" className="attach-btn">
+                    <div className="cw-input-bar">
+                        <label className="cw-attach" title="Upload evidence">
                             📎
-                            <input type="file" hidden onChange={handleFileUpload} disabled={!sessionId || isUploading} />
+                            <input type="file" hidden onChange={handleFileUpload}
+                                disabled={!sessionId || isUploading} />
                         </label>
-
                         <VoiceRecorder onRecordingComplete={handleVoiceInput} isProcessing={loading} />
-
                         <input
+                            className="cw-input"
                             type="text"
-                            className="chat-input"
-                            placeholder="Type your answer…"
+                            placeholder="Describe your issue or type your answer…"
                             value={inputText}
-                            onChange={(e) => setInputText(e.target.value)}
+                            onChange={e => setInputText(e.target.value)}
                             onKeyPress={handleKeyPress}
                             disabled={loading}
                         />
                         <button
-                            className="btn-send"
+                            className="cw-send-btn"
                             onClick={handleSend}
                             disabled={loading || !inputText.trim()}
-                            aria-label="Send">
-                            ➜
-                        </button>
+                            aria-label="Send">↑</button>
                     </div>
                 )}
-            </div>
-
-            {/* Sidebar: Discovered Facts */}
-            {realEntities.length > 0 && (
-                <div className="entities-panel">
-                    <div className="entities-title">Discovered Facts</div>
-                    <div className="tag-cloud">
-                        {realEntities.map(([key, value]) => (
-                            <div key={key} className="data-tag">
-                                <span>{labelFor(key)}:</span>
-                                <strong>{value}</strong>
-                            </div>
-                        ))}
-                    </div>
-
-                    {latestData?.readinessScore !== undefined && (
-                        <div style={{ marginTop: '1.5rem' }}>
-                            <div className="entities-title">Evidence Readiness</div>
-                            <div className="readiness-bar-bg">
-                                <div className="readiness-bar-fill" style={{
-                                    width: `${latestData.readinessScore}%`,
-                                    background: latestData.readinessScore >= 75 ? '#22c55e'
-                                        : latestData.readinessScore >= 40 ? '#eab308'
-                                            : '#ef4444',
-                                }} />
-                            </div>
-                            <div className="readiness-label-row">
-                                <strong>{latestData.readinessScore}/100</strong>
-                                <span>
-                                    {latestData.readinessScore >= 75 ? '✅ Strong evidence'
-                                        : latestData.readinessScore >= 50 ? '🟡 Good — add more if possible'
-                                            : latestData.readinessScore >= 25 ? '⚠️ Some evidence present'
-                                                : '❌ Very limited evidence'}
-                                </span>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
+            </main>
         </div>
     );
 }

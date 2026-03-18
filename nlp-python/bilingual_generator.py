@@ -19,12 +19,12 @@ MODE A — "petition_to_authority" (sent to police/court/commission)
     [State]
 
     To
-    [Authority Name],          ← government/institutional authority
+    [Authority Name],          <- government/institutional authority
     [District, State]
 
     Sub: ...
     Respected Sir/Madam,
-    [3 body paragraphs — first person]
+    [3 body paragraphs - first person]
     Relevant documents attached:
     1. ...
     Thank You,
@@ -33,7 +33,7 @@ MODE A — "petition_to_authority" (sent to police/court/commission)
     [Phone]
     DISCLAIMER
 
-MODE B — "demand_letter_to_party" (sent directly to other party)
+MODE B - "demand_letter_to_party" (sent directly to other party)
   Used for: legal_notice, family_petition (maintenance demand), workplace_complaint
             when directed at employer directly
 
@@ -48,12 +48,12 @@ MODE B — "demand_letter_to_party" (sent directly to other party)
     [State]
 
     To
-    [Other Party Name],        ← landlord / employer / debtor etc.
+    [Other Party Name],        <- landlord / employer / debtor etc.
     [Other Party Address/City]
 
     Sub: ...
     Dear Mr./Ms. [Other Party Name],
-    [3 body paragraphs — first person, assertive demand tone]
+    [3 body paragraphs - first person, assertive demand tone]
     Yours faithfully,
     Signature: ___
     [Name]
@@ -61,12 +61,12 @@ MODE B — "demand_letter_to_party" (sent directly to other party)
     DISCLAIMER
 
 Rules for all modes:
-  - Ref No and Date always at the very TOP before From
-  - First person throughout ("I", "my", "me") — never third person
+  - Date always at the very TOP before From
+  - First person throughout ("I", "my", "me") - never third person
   - No section headings (COMPLAINANT DETAILS, INCIDENT DETAILS etc.)
   - No filler phrases ("I hope", "I trust", "I am confident")
   - Evidence list uses actual items, not placeholder text
-  - Single disclaimer at the bottom only
+  - No disclaimer in document
 """
 
 import json
@@ -82,7 +82,7 @@ LANGUAGE_NAMES = {
     "mr": "Marathi", "bn": "Bengali","gu": "Gujarati",
 }
 
-# ── Doc types that go DIRECTLY to the other party (not an authority) ──────────
+# Doc types that go DIRECTLY to the other party (not an authority)
 DEMAND_LETTER_TYPES = {
     "legal_notice",      # landlord, tenant, debtor, contractor disputes
     "family_petition",   # maintenance demand to spouse/family member
@@ -178,14 +178,10 @@ def _already_in(text: str, value: str) -> bool:
     return _norm(value) in _norm(text)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 1 — Classify intent
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# STEP 1 - Classify intent
+# ---------------------------------------------------------------------------
 def _classify_intent(intent: str, facts: dict) -> dict:
-    """
-    Returns doc_type, authority (or other_party for demand letters),
-    other_party_location, ref_prefix, and is_demand_letter flag.
-    """
     clean = _clean_facts(facts)
     prompt = f"""You are an Indian legal document classifier with deep knowledge of Indian law.
 Carefully read the legal issue and facts, then make the CORRECT classification.
@@ -195,91 +191,77 @@ LEGAL ISSUE: {intent}
 FACTS:
 {_facts_text(clean)}
 
-═══ CLASSIFICATION RULES ═══
+CLASSIFICATION RULES:
 
-STEP 1 — Determine the nature of the dispute:
-  A) Criminal matter (theft, robbery, assault, serious criminal cheating/fraud by strangers, harassment) → police or court
-  B) Civil/contractual dispute between two private parties (landlord-tenant, employer-employee salary,
-     service provider, loan between individuals) → demand letter / legal notice to the OTHER PARTY
-     **CRITICAL GENERAL RULE:** Disputes over rental security deposits, rent, unpaid loans between known persons, breach of contract, or employment dues are ALWAYS CIVIL (legal_notice). DO NOT classify them as `police_complaint_fir` even if the user claims the other party "cheated" or "stole" their money.
-  C) Consumer grievance (defective product, e-commerce, insurance, telecom) → consumer commission
-  D) Government/public grievance (RTI, government scheme) → government authority
+STEP 1 - Determine the nature of the dispute:
+  A) Criminal matter (theft, robbery, assault, serious criminal cheating/fraud by strangers, harassment) -> police or court
+  B) Civil/contractual dispute between two private parties -> demand letter / legal notice to the OTHER PARTY
+     CRITICAL: Disputes over rental deposits, rent, unpaid loans, breach of contract, employment dues
+     are ALWAYS CIVIL (legal_notice). Do NOT classify as police_complaint_fir.
+  C) Consumer grievance (defective product, e-commerce, insurance, telecom) -> consumer commission
+  D) Government/public grievance (RTI, government scheme) -> government authority
 
-STEP 2 — Pick the most logical doc_type based on the facts provided:
-  Valid values:
-  - police_complaint_fir
-  - cyber_fraud_complaint
-  - consumer_complaint
-  - legal_notice
-  - workplace_complaint
-  - family_petition
-  - banking_complaint
-  - rti_application
-  - property_dispute
-  - insurance_complaint
-  - civil_petition
-  - general_petition
+STEP 2 - Pick the most logical doc_type:
+  Valid values: police_complaint_fir, cyber_fraud_complaint, consumer_complaint,
+  legal_notice, workplace_complaint, family_petition, banking_complaint,
+  rti_application, property_dispute, insurance_complaint, civil_petition, general_petition
 
-STEP 3 — Determine the correct recipient.
-  If it's an AUTHORITY (police, bank manager, consumer court), fill "authority" with their official title (e.g. "The Station House Officer", "The Branch Manager").
-  If it's a PRIVATE INDIVIDUAL/COMPANY (landlord, employer, debtor, spouse), fill "other_party" with their EXACT name and "other_party_location" with their address/city.
+STEP 3 - Determine the correct recipient.
+  If AUTHORITY -> fill "authority" with official title (e.g. "The Station House Officer").
+  If PRIVATE PARTY -> fill "other_party" with their name, "other_party_location" with address.
 
-IMPORTANT: NEVER use `police_complaint_fir` for matters that are fundamentally civil (even if bad words like "fraud" or "cheating" are used casually by the user to describe a broken promise). Only use `police_complaint_fir` if criminal intent is obvious (like a stranger stealing a phone or physically attacking someone).
+IMPORTANT CLASSIFICATION RULES:
+  - Threatening phone calls, extortion, blackmail = Harassment / Threat -> police_complaint_fir
+  - Online fraud, UPI fraud = cyber_fraud_complaint
+  - Defective product/service = consumer_complaint
+  - Salary dispute = workplace_complaint
+  - NEVER classify threatening calls as general_petition
 
-Return valid JSON only — no markdown:
+Return valid JSON only - no markdown:
 {{
   "doc_type": "legal_notice",
   "authority": "",
   "other_party": "R. Kumar",
   "other_party_location": "Salem, Tamil Nadu",
   "ref_prefix": "LN",
-  "reasoning": "Landlord refusing to return security deposit is a civil contractual dispute"
+  "reasoning": "civil contractual dispute"
 }}
-
-Note: Fill "authority" for government/authority recipients, "other_party" for private party recipients.
 """
     try:
         resp = llm.invoke([
-            SystemMessage(content="Indian legal classifier. Think carefully. Return JSON only, no markdown."),
+            SystemMessage(content="Indian legal classifier. Return JSON only, no markdown."),
             HumanMessage(content=prompt)
         ])
         data = _parse_json(resp.content)
         doc_type = str(data.get("doc_type", "general_petition")).strip()
-
         print(f"[_classify_intent] doc_type={doc_type}, reasoning={data.get('reasoning','')}")
 
-        # Extract authority location from collected facts
         authority_location = ""
         authority_name = str(data.get("authority", "The Concerned Authority")).strip()
 
-        # Get location-specific details from facts
-        police_station = str(facts.get("police_station_name", "")).strip()
-        forum_district = str(facts.get("consumer_forum_district", "")).strip()
-        bank_branch = str(facts.get("bank_branch_details", "")).strip()
+        police_station   = str(facts.get("police_station_name", "")).strip()
+        forum_district   = str(facts.get("consumer_forum_district", "")).strip()
+        bank_branch      = str(facts.get("bank_branch_details", "")).strip()
         insurance_office = str(facts.get("insurance_office_location", "")).strip()
         employer_address = str(facts.get("employer_name_address", "")).strip()
-        rti_department = str(facts.get("rti_department_name", "")).strip()
-
-        # Determine authority location based on what was collected.
-        # IMPORTANT: When a specific branch address is given, use it ONLY as authority_location.
-        # The LLM already puts the authority name (e.g. "The Branch Manager, SBI") in authority_name.
-        # We must NOT repeat the full branch address in authority_name AND authority_location.
+        rti_department   = str(facts.get("rti_department_name", "")).strip()
 
         if police_station and is_real_value(police_station):
             authority_location = police_station
             if "police station" not in police_station.lower():
                 authority_location = f"{police_station} Police Station"
-            # Override LLM authority name to avoid duplication
             authority_name = "The Station House Officer"
 
         elif bank_branch and is_real_value(bank_branch):
-            # bank_branch already contains the full branch address
-            # Put it entirely in authority_location; authority_name should be generic title only
             authority_location = bank_branch
             authority_name = "The Branch Manager"
 
         elif forum_district and is_real_value(forum_district):
-            authority_location = f"District Consumer Forum, {forum_district}"
+            if "district consumer forum" in forum_district.lower() or "consumer forum" in forum_district.lower():
+                authority_location = forum_district
+            else:
+                authority_location = f"District Consumer Forum, {forum_district}"
+            authority_name = "The President, District Consumer Disputes Redressal Commission"
 
         elif insurance_office and is_real_value(insurance_office):
             authority_location = insurance_office
@@ -291,30 +273,29 @@ Note: Fill "authority" for government/authority recipients, "other_party" for pr
         elif employer_address and is_real_value(employer_address):
             authority_location = employer_address
 
-        # Fallback to district/state from personal info if nothing specific
         if not authority_location:
             district = str(facts.get("user_district", "")).strip()
-            state = str(facts.get("user_state", "")).strip()
+            state    = str(facts.get("user_state", "")).strip()
             authority_location = ", ".join(p for p in [district, state] if p and is_real_value(p))
 
-        # Final fallback
         if not authority_location:
             authority_location = "India"
 
-        # Prefer the explicitly collected other_party_name from facts over LLM inference
-        llm_other_party    = str(data.get("other_party",          "")).strip()
-        llm_other_party_loc= str(data.get("other_party_location", "")).strip()
+        llm_other_party     = str(data.get("other_party", "")).strip()
+        llm_other_party_loc = str(data.get("other_party_location", "")).strip()
 
-        # Use fact-collected name if available (more reliable than LLM inference)
-        known_other_party = str(facts.get("other_party_name",      "")).strip() or \
-                            str(facts.get("landlord_name_contact",  "")).strip() or \
-                            str(facts.get("landlord_name",          "")).strip()
+        known_other_party = (
+            str(facts.get("other_party_name",     "")).strip() or
+            str(facts.get("landlord_name_contact", "")).strip() or
+            str(facts.get("landlord_name",         "")).strip()
+        )
         other_party_final = known_other_party if is_real_value(known_other_party) else llm_other_party
 
-        # Other party location: prefer property address from facts
-        known_other_party_loc = str(facts.get("property_exact_location",   "")).strip() or \
-                                str(facts.get("rental_property_address",   "")).strip() or \
-                                llm_other_party_loc
+        known_other_party_loc = (
+            str(facts.get("property_exact_location", "")).strip() or
+            str(facts.get("rental_property_address", "")).strip() or
+            llm_other_party_loc
+        )
 
         return {
             "doc_type":             doc_type,
@@ -322,7 +303,7 @@ Note: Fill "authority" for government/authority recipients, "other_party" for pr
             "authority_location":   authority_location,
             "other_party":          other_party_final,
             "other_party_location": known_other_party_loc,
-            "ref_prefix":           str(data.get("ref_prefix",           "SV")).upper().strip(),
+            "ref_prefix":           str(data.get("ref_prefix", "SV")).upper().strip(),
             "is_demand_letter":     doc_type in DEMAND_LETTER_TYPES,
         }
     except Exception as e:
@@ -338,14 +319,13 @@ Note: Fill "authority" for government/authority recipients, "other_party" for pr
         }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 2 — Extract scalar header values
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# STEP 2 - Extract scalar header values
+# ---------------------------------------------------------------------------
 def _extract_scalars(intent: str, facts: dict, language: str) -> dict:
     clean     = _clean_facts(facts)
     lang_name = LANGUAGE_NAMES.get(language, "English")
 
-    # Generate subject line
     subject = ""
     try:
         resp = llm.invoke([
@@ -390,44 +370,36 @@ def _extract_scalars(intent: str, facts: dict, language: str) -> dict:
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 3 — Generate body + evidence list
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# STEP 3 - Generate body + evidence list
+# ---------------------------------------------------------------------------
 def _generate_body(intent: str, facts: dict, language: str,
                    is_demand_letter: bool = False,
-                   other_party: str = "") -> tuple[str, str]:
-    """
-    Returns (body_paragraphs, documents_list).
-    """
+                   other_party: str = "") -> tuple:
     lang_name = LANGUAGE_NAMES.get(language, "English")
     clean     = _clean_facts(facts)
 
-    # Detect evidence: filter out values that are just repeating the complaint narrative
-    # (user pasted complaint text instead of listing actual evidence items)
     evidence_keys = ["evidence_available", "evidence_details",
                      "documents_available", "proof_available"]
     evidence_raw_parts = []
     for k in evidence_keys:
         v = str(clean.get(k, "")).strip()
         if v:
-            # If the evidence field just repeats factual narrative (>40 chars and no
-            # mention of specific document types), treat as "no specific evidence"
             doc_keywords = ["receipt", "bill", "sms", "screenshot", "photo", "video",
                             "cctv", "statement", "certificate", "agreement", "contract",
                             "report", "invoice", "bank", "email", "whatsapp", "message",
-                            "proof", "record", "document", "evidence", "உரிமம்", "ரசீது"]
+                            "proof", "record", "document", "evidence"]
             has_doc_keyword = any(kw in v.lower() for kw in doc_keywords)
             if has_doc_keyword or len(v) < 50:
                 evidence_raw_parts.append(v)
-            # else: narrative repeated — skip
     evidence_raw = " | ".join(evidence_raw_parts).strip()
 
     if is_demand_letter:
         tone_instruction = (
             "This is a formal DEMAND LETTER / LEGAL NOTICE sent directly to the other party.\n"
-            "Tone: firm, assertive, and formal — like a legal notice before court action.\n"
+            "Tone: firm, assertive, and formal.\n"
             f"The letter is addressed to: {other_party if other_party else 'the other party'}.\n"
-            "Paragraph 3: one clear demand with a deadline, and state consequences if not complied.\n"
+            "Paragraph 3: one clear demand with a deadline, state consequences if not complied.\n"
         )
     else:
         tone_instruction = (
@@ -441,44 +413,39 @@ Write ENTIRELY in {lang_name}.
 
 Legal issue: "{intent}"
 
-CONFIRMED FACTS — use ONLY these, do not add anything not listed here:
+CONFIRMED FACTS - use ONLY these:
 {_facts_text(clean)}
 
 {tone_instruction}
 
-═══ PART 1: BODY (exactly 3 SHORT paragraphs) ═══
+PART 1: BODY (exactly 3 SHORT paragraphs)
 Write IN FIRST PERSON ("I", "my", "me").
-Each paragraph: 2 to 3 sentences MAXIMUM. Keep it concise and professional.
+Each paragraph: 2 to 3 sentences MAXIMUM.
 
-Paragraph 1 — Facts: State what happened. Include dates, amounts, agreed terms.
-Paragraph 2 — Harm: State the specific loss or harm caused and why the other party is at fault.
-Paragraph 3 — Demand/Request: State the specific action demanded or requested, with deadline if applicable.
+Paragraph 1 - Facts: What happened. Dates, amounts, agreed terms.
+Paragraph 2 - Harm: Specific loss or harm caused and why other party is at fault.
+Paragraph 3 - Demand/Request: Specific action demanded or requested, with deadline if applicable.
 
 CRITICAL RULES:
-- 2-3 sentences per paragraph ONLY — no padding, no filler
-- First person ONLY: "I", "my", "me" — NEVER "the complainant", "the victim", "he/she/they"
-- Include specific amounts (₹), dates (DD/MM/YYYY), and names from the facts
-- NO filler phrases: "I hope", "I trust", "I am confident", "I believe", "I am writing this"
-- Do NOT repeat facts across paragraphs
+- 2-3 sentences per paragraph ONLY
+- First person ONLY: "I", "my", "me"
+- Include specific amounts (Rs.), dates (DD/MM/YYYY), and names from facts
+- NO filler phrases
 - No markdown, no bold, no bullets
-- Do NOT include sender's name, phone, or address in the body text
+- Do NOT include sender's name, phone, or address in body text
 - Do NOT cite law section numbers
-- Do NOT invent facts not in the confirmed list above
+- Do NOT invent facts
 
-Write this EXACT marker on its own line after the 3 paragraphs:
+Write this EXACT marker after the 3 paragraphs:
 ---DOCUMENTS---
 
-═══ PART 2: EVIDENCE LIST ═══
+PART 2: EVIDENCE LIST
 Evidence from facts: "{evidence_raw}"
 
 Rules:
-- If specific document types are mentioned (rental agreement, bank SMS, receipt, photograph,
-  CCTV, medical report, purchase bill, WhatsApp messages, email, contract etc.)
-  → list EACH as a numbered item.
-- If the evidence field only contains a narrative of what happened (not actual document names)
-  OR is empty → write: 1. Relevant documents and evidence will be submitted upon request.
-- NEVER list the complaint narrative as evidence.
-- NEVER invent evidence items.
+- If specific document types mentioned -> list EACH as a numbered item.
+- If no specific documents -> write: 1. Relevant documents and evidence will be submitted upon request.
+- NEVER list complaint narrative as evidence.
 """
     try:
         resp = llm.invoke([
@@ -488,9 +455,9 @@ Rules:
         raw = _strip_md(resp.content)
     except Exception as e:
         print(f"[_generate_body] error: {e}")
-        raw = (f"I respectfully submit the following.\n\n"
-               f"I have suffered loss due to the matter described.\n\n"
-               f"I request immediate resolution of this matter.\n\n"
+        raw = ("I respectfully submit the following.\n\n"
+               "I have suffered loss due to the matter described.\n\n"
+               "I request immediate resolution of this matter.\n\n"
                "---DOCUMENTS---\n"
                "1. Relevant documents and evidence will be submitted upon request.")
 
@@ -512,226 +479,151 @@ Rules:
     body_paragraphs = body_part.strip()
     documents_list  = doc_part.strip() or "1. Relevant documents and evidence will be submitted upon request."
 
+    # Strip phone numbers leaked into body
+    body_paragraphs = re.sub(r'\b(?:\+91[\s\-]?)?[6-9]\d{9}\b', '[number redacted]', body_paragraphs)
+    body_paragraphs = re.sub(r'\b0\d{2,4}[\s\-]?\d{6,8}\b', '[number redacted]', body_paragraphs)
+
     return body_paragraphs, documents_list
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 4A — Assemble petition to authority
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# STEP 4A - Applicable laws
+# ---------------------------------------------------------------------------
 def get_applicable_laws(doc_type: str, facts: dict) -> list:
-    """
-    Returns list of relevant Indian law sections based on document type and facts.
-    Uses simple keyword matching - no database or RAG needed.
-    
-    Args:
-        doc_type: Type of legal document (police_complaint_fir, consumer_complaint, etc.)
-        facts: Dictionary of collected facts from user
-    
-    Returns:
-        List of applicable law sections as strings
-    """
-    
     applicable_laws = []
-    
-    # Convert facts to lowercase text for keyword matching
     facts_text = " ".join(str(v).lower() for v in facts.values() if v)
-    
-    # ═══ CRIMINAL COMPLAINTS ═══
+
     if doc_type == "police_complaint_fir":
-        # Always add FIR registration section
         applicable_laws.append("Code of Criminal Procedure 1973, Section 154 - Registration of FIR")
-        
-        # Theft-related
-        if any(keyword in facts_text for keyword in ["theft", "stolen", "robbery", "burglary", "missing items", "stole"]):
+        if any(k in facts_text for k in ["theft", "stolen", "robbery", "burglary", "stole"]):
             applicable_laws.append("Indian Penal Code 1860, Section 379 - Punishment for theft")
             if "house" in facts_text or "home" in facts_text:
                 applicable_laws.append("Indian Penal Code 1860, Section 380 - Theft in dwelling house")
-        
-        # Assault/Violence
-        if any(keyword in facts_text for keyword in ["assault", "attack", "beat", "hit", "violence", "hurt", "injury"]):
-            applicable_laws.append("Indian Penal Code 1860, Section 323 - Punishment for voluntarily causing hurt")
-            if "grievous" in facts_text or "serious" in facts_text:
-                applicable_laws.append("Indian Penal Code 1860, Section 325 - Grievous hurt")
-        
-        # Cheating/Fraud
-        if any(keyword in facts_text for keyword in ["cheat", "fraud", "dishonest", "deceive", "false promise"]):
-            applicable_laws.append("Indian Penal Code 1860, Section 420 - Cheating and dishonestly inducing delivery of property")
-        
-        # Harassment (women)
-        if any(keyword in facts_text for keyword in ["harass", "modesty", "woman", "female", "girl", "inappropriate"]):
-            applicable_laws.append("Indian Penal Code 1860, Section 354 - Assault or criminal force with intent to outrage modesty")
-            applicable_laws.append("Indian Penal Code 1860, Section 509 - Word, gesture or act intended to insult the modesty of a woman")
-        
-        # Threats/Intimidation
-        if any(keyword in facts_text for keyword in ["threat", "intimidate", "criminal intimidation", "blackmail"]):
-            applicable_laws.append("Indian Penal Code 1860, Section 506 - Punishment for criminal intimidation")
-    
-    # ═══ CYBER CRIMES ═══
+        if any(k in facts_text for k in ["assault", "attack", "beat", "hit", "violence", "hurt"]):
+            applicable_laws.append("Indian Penal Code 1860, Section 323 - Voluntarily causing hurt")
+        if any(k in facts_text for k in ["cheat", "fraud", "dishonest", "deceive"]):
+            applicable_laws.append("Indian Penal Code 1860, Section 420 - Cheating")
+        if any(k in facts_text for k in ["harass", "modesty", "woman", "female", "girl"]):
+            applicable_laws.append("Indian Penal Code 1860, Section 354 - Outraging modesty")
+            applicable_laws.append("Indian Penal Code 1860, Section 509 - Insulting modesty of a woman")
+        if any(k in facts_text for k in ["threat", "intimidate", "blackmail"]):
+            applicable_laws.append("Indian Penal Code 1860, Section 506 - Criminal intimidation")
+
     elif doc_type == "cyber_fraud_complaint":
         applicable_laws.append("Information Technology Act 2000, Section 66C - Identity theft")
-        applicable_laws.append("Information Technology Act 2000, Section 66D - Cheating by personation using computer resource")
-        
-        if any(keyword in facts_text for keyword in ["hack", "unauthorized access", "password"]):
-            applicable_laws.append("Information Technology Act 2000, Section 66 - Computer related offences")
-        
-        if any(keyword in facts_text for keyword in ["obscene", "pornography", "indecent"]):
-            applicable_laws.append("Information Technology Act 2000, Section 67 - Publishing obscene material")
-        
-        # Also add IPC cheating section for cyber fraud
-        applicable_laws.append("Indian Penal Code 1860, Section 420 - Cheating and dishonestly inducing delivery of property")
-    
-    # ═══ CONSUMER COMPLAINTS ═══
+        applicable_laws.append("Information Technology Act 2000, Section 66D - Cheating by personation")
+        applicable_laws.append("Indian Penal Code 1860, Section 420 - Cheating")
+
     elif doc_type == "consumer_complaint":
         applicable_laws.append("Consumer Protection Act 2019, Section 35 - Consumer disputes redressal")
         applicable_laws.append("Consumer Protection Act 2019, Section 2(7) - Definition of consumer")
-        
-        if any(keyword in facts_text for keyword in ["defective", "defect", "faulty", "not working"]):
+        if any(k in facts_text for k in ["defective", "defect", "faulty", "not working"]):
             applicable_laws.append("Consumer Protection Act 2019, Section 2(10) - Definition of defect")
-        
-        if any(keyword in facts_text for keyword in ["unfair", "misleading", "false advertisement"]):
+        if any(k in facts_text for k in ["unfair", "misleading"]):
             applicable_laws.append("Consumer Protection Act 2019, Section 2(47) - Unfair trade practice")
-        
-        if any(keyword in facts_text for keyword in ["service", "contractor", "repair", "plumber", "electrician"]):
-            applicable_laws.append("Consumer Protection Act 2019, Section 2(42) - Definition of service")
-    
-    # ═══ CIVIL DISPUTES (Legal Notices) ═══
+
     elif doc_type == "legal_notice":
-        # Property/Landlord-Tenant
-        if any(keyword in facts_text for keyword in ["property", "land", "house", "rent", "landlord", "tenant", "lease"]):
+        if any(k in facts_text for k in ["property", "land", "house", "rent", "landlord", "tenant"]):
             applicable_laws.append("Transfer of Property Act 1882")
-            applicable_laws.append("Specific Relief Act 1963, Section 9 - Suits for specific performance of contracts")
-            
-            if "rent" in facts_text or "tenant" in facts_text:
-                applicable_laws.append("Rent Control Act (State-specific)")
-        
-        # Contract breach
-        if any(keyword in facts_text for keyword in ["contract", "agreement", "breach", "violation"]):
-            applicable_laws.append("Indian Contract Act 1872, Section 73 - Compensation for loss or damage caused by breach of contract")
-        
-        # Money recovery
-        if any(keyword in facts_text for keyword in ["loan", "debt", "owe", "borrow", "repay", "recovery"]):
+            applicable_laws.append("Specific Relief Act 1963, Section 9 - Specific performance")
+        if any(k in facts_text for k in ["contract", "agreement", "breach"]):
+            applicable_laws.append("Indian Contract Act 1872, Section 73 - Compensation for breach")
+        if any(k in facts_text for k in ["loan", "debt", "owe", "borrow", "repay"]):
             applicable_laws.append("Civil Procedure Code 1908, Order 37 - Summary Procedure")
-        
-        # Defamation
-        if any(keyword in facts_text for keyword in ["defamation", "reputation", "false statement", "slander", "libel"]):
-            applicable_laws.append("Indian Penal Code 1860, Sections 499-502 - Defamation")
-    
-    # ═══ WORKPLACE/EMPLOYMENT ═══
+
     elif doc_type == "workplace_complaint":
         applicable_laws.append("Industrial Disputes Act 1947, Section 2(s) - Definition of workman")
-        
-        if any(keyword in facts_text for keyword in ["salary", "wage", "payment", "unpaid", "dues"]):
-            applicable_laws.append("Payment of Wages Act 1936, Section 5 - Fixation of wage-periods and time of payment")
-        
-        if any(keyword in facts_text for keyword in ["terminate", "dismiss", "fire", "retrench"]):
-            applicable_laws.append("Industrial Disputes Act 1947, Section 25F - Conditions precedent to retrenchment")
-        
-        if any(keyword in facts_text for keyword in ["harassment", "sexual", "misconduct"]):
-            applicable_laws.append("Sexual Harassment of Women at Workplace (Prevention, Prohibition and Redressal) Act 2013")
-        
-        if any(keyword in facts_text for keyword in ["provident fund", "pf", "epf"]):
-            applicable_laws.append("Employees' Provident Funds Act 1952")
-    
-    # ═══ BANKING COMPLAINTS ═══
+        if any(k in facts_text for k in ["salary", "wage", "payment", "unpaid"]):
+            applicable_laws.append("Payment of Wages Act 1936, Section 5 - Time of payment")
+        if any(k in facts_text for k in ["terminate", "dismiss", "fire", "retrench"]):
+            applicable_laws.append("Industrial Disputes Act 1947, Section 25F - Retrenchment conditions")
+        if any(k in facts_text for k in ["harassment", "sexual", "misconduct"]):
+            applicable_laws.append("Sexual Harassment of Women at Workplace Act 2013")
+
     elif doc_type == "banking_complaint":
         applicable_laws.append("Banking Regulation Act 1949")
         applicable_laws.append("Reserve Bank of India Act 1934")
-        
-        if any(keyword in facts_text for keyword in ["unauthorized", "debit", "transaction", "fraud"]):
+        if any(k in facts_text for k in ["unauthorized", "debit", "transaction", "fraud"]):
             applicable_laws.append("Payment and Settlement Systems Act 2007")
-        
-        if any(keyword in facts_text for keyword in ["loan", "credit", "emi"]):
-            applicable_laws.append("Banking Ombudsman Scheme 2006")
-    
-    # ═══ INSURANCE COMPLAINTS ═══
+
     elif doc_type == "insurance_complaint":
         applicable_laws.append("Insurance Act 1938")
         applicable_laws.append("Insurance Regulatory and Development Authority Act 1999")
-        
-        if any(keyword in facts_text for keyword in ["claim", "reject", "denial"]):
+        if any(k in facts_text for k in ["claim", "reject", "denial"]):
             applicable_laws.append("IRDAI (Protection of Policyholders' Interests) Regulations 2017")
-    
-    # ═══ RTI APPLICATIONS ═══
+
     elif doc_type == "rti_application":
-        applicable_laws.append("Right to Information Act 2005, Section 6 - Request for obtaining information")
+        applicable_laws.append("Right to Information Act 2005, Section 6 - Request for information")
         applicable_laws.append("Right to Information Act 2005, Section 7 - Disposal of request")
-    
-    # ═══ PROPERTY DISPUTES ═══
+
     elif doc_type == "property_dispute":
         applicable_laws.append("Transfer of Property Act 1882")
         applicable_laws.append("Indian Easements Act 1882")
-        
-        if any(keyword in facts_text for keyword in ["encroachment", "boundary", "trespass"]):
+        if any(k in facts_text for k in ["encroachment", "boundary", "trespass"]):
             applicable_laws.append("Specific Relief Act 1963, Section 38 - Perpetual injunction")
-    
-    # ═══ FAMILY MATTERS ═══
+
     elif doc_type == "family_petition":
-        if any(keyword in facts_text for keyword in ["maintenance", "alimony", "spouse", "wife", "husband"]):
-            applicable_laws.append("Code of Criminal Procedure 1973, Section 125 - Order for maintenance of wives, children and parents")
-            applicable_laws.append("Hindu Marriage Act 1955, Section 24 - Maintenance pendente lite and expenses of proceedings")
-        
-        if any(keyword in facts_text for keyword in ["divorce", "separation"]):
+        if any(k in facts_text for k in ["maintenance", "alimony", "spouse", "wife", "husband"]):
+            applicable_laws.append("Code of Criminal Procedure 1973, Section 125 - Maintenance")
+            applicable_laws.append("Hindu Marriage Act 1955, Section 24 - Maintenance pendente lite")
+        if any(k in facts_text for k in ["divorce", "separation"]):
             applicable_laws.append("Hindu Marriage Act 1955, Section 13 - Divorce")
-    
-    # Remove duplicates while preserving order
+
     seen = set()
-    unique_laws = []
-    for law in applicable_laws:
-        if law not in seen:
-            seen.add(law)
-            unique_laws.append(law)
-    
-    return unique_laws
+    return [law for law in applicable_laws if not (law in seen or seen.add(law))]
 
 
+# ---------------------------------------------------------------------------
+# Helper: split address into lines, merging number-only prefixes
+# ---------------------------------------------------------------------------
+def _split_address_lines(raw_addr: str) -> list:
+    """Split comma-separated address into clean lines.
+    Merges a standalone number prefix (e.g. "7") with the next part so
+    "7, Mariamman Koil Street" renders as one line, not two."""
+    if not raw_addr:
+        return []
+    raw_parts = [p.strip().rstrip(',').strip() for p in raw_addr.split(',')]
+    merged = []
+    i = 0
+    while i < len(raw_parts):
+        part = raw_parts[i]
+        # If this part is just a number or short plot prefix, merge with next part
+        if part and re.match(r'^\d+[A-Za-z]?$', part) and i + 1 < len(raw_parts):
+            merged.append(f"{part}, {raw_parts[i + 1]}")
+            i += 2
+        elif part:
+            merged.append(part)
+            i += 1
+        else:
+            i += 1
+    return merged
+
+
+# ---------------------------------------------------------------------------
+# STEP 4A - Assemble petition to authority
+# ---------------------------------------------------------------------------
 def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
-                       authority: str, authority_location: str, today_str: str, doc_type: str, facts: dict,
+                       authority: str, authority_location: str, today_str: str,
+                       doc_type: str, facts: dict,
                        disclaimer: str = "", reference_number: str = "") -> str:
-    name      = scalars.get("full_name",    "")
-    address   = scalars.get("full_address", "")
-    district  = scalars.get("district",     "")
-    state     = scalars.get("state",        "")
-    pincode   = scalars.get("pincode",      "")
-    phone     = scalars.get("phone",        "")
-    subject   = scalars.get("subject",      "")
+    name     = scalars.get("full_name",    "")
+    address  = scalars.get("full_address", "")
+    district = scalars.get("district",     "")
+    state    = scalars.get("state",        "")
+    pincode  = scalars.get("pincode",      "")
+    phone    = scalars.get("phone",        "")
+    subject  = scalars.get("subject",      "")
 
     district_raw = scalars.get("district_raw", district)
     state_raw    = scalars.get("state_raw",    state)
 
-    # Use the authority_location passed from classification
-    auth_loc = authority_location if authority_location else "India"
-
+    auth_loc   = authority_location if authority_location else "India"
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
 
-    city_state_pin = []
-    if district: city_state_pin.append(district)
-    if state: city_state_pin.append(state)
-    
-    city_state_str = ", ".join(city_state_pin)
-    if pincode and city_state_str:
-        last_line = f"{city_state_str} - {pincode}"
-    elif city_state_str:
-        last_line = city_state_str
-    elif pincode:
-        last_line = pincode
-    else:
-        last_line = ""
-
-    # Compute applicable laws for this doc type
     applicable_laws = get_applicable_laws(doc_type, facts)
-
-    # Split full_address into individual lines at commas, just like the To block
-    def _split_address_lines(raw_addr: str) -> list:
-        """Split a comma-separated address string into clean individual lines."""
-        if not raw_addr:
-            return []
-        parts_out = [p.strip().rstrip(',').strip() for p in raw_addr.split(',')]
-        return [p for p in parts_out if p]
-
-    addr_lines = _split_address_lines(addr_clean)
+    addr_lines      = _split_address_lines(addr_clean)
 
     parts = []
-    # NO Ref No — removed per user request
     parts.append(f"Date: {datetime.now().strftime('%d/%m/%Y (%A)')}")
     parts.append("")
 
@@ -741,16 +633,21 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
     for line in addr_lines:
         parts.append(line)
     parts.append("")
-    
+
     parts.append("To:")
     if authority:
         parts.append(authority.strip().rstrip(','))
     if auth_loc:
-        loc_parts = auth_loc.replace('\n', ',').split(',')
-        for loc_part in loc_parts:
-            cleaned = loc_part.strip().rstrip(',')
-            if cleaned and cleaned != authority.strip():
-                parts.append(cleaned)
+        auth_loc_normalized = auth_loc.strip().rstrip(',')
+        if '\n' in auth_loc_normalized:
+            loc_lines = [l.strip().rstrip(',') for l in auth_loc_normalized.split('\n') if l.strip()]
+        elif auth_loc_normalized.count(',') >= 2:
+            loc_lines = [p.strip().rstrip(',') for p in auth_loc_normalized.split(',') if p.strip()]
+        else:
+            loc_lines = [auth_loc_normalized]
+        for loc_line in loc_lines:
+            if loc_line and loc_line != authority.strip():
+                parts.append(loc_line)
     parts.append("")
     parts.append(f"Sub: {subject}")
     parts.append("")
@@ -763,14 +660,15 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
 
     if applicable_laws:
         parts.append("Applicable Legal Provisions:")
-        parts.append("")
-        for i, law in enumerate(applicable_laws, 1):
-            parts.append(f"{i}. {law}")
+        for law in applicable_laws:
+            parts.append(f"  \u2022 {law}")
         parts.append("")
 
     parts.append("Relevant documents attached:")
     for line in documents_list.splitlines():
-        if line.strip(): parts.append(f"   {line.strip()}")
+        stripped = re.sub(r'^\d+\.\s*', '', line.strip())
+        if stripped:
+            parts.append(f"  \u2022 {stripped}")
     parts.append("")
     parts.append("Thank you.")
     parts.append("")
@@ -780,8 +678,10 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
     parts.append("________________________")
     parts.append("(Signature)")
     parts.append("")
-    if name:  parts.append(f"Name: {name}")
-    if phone: parts.append(f"Contact: {phone}")
+    if name:
+        parts.append(f"Name: {name}")
+    if phone:
+        parts.append(f"Contact: {phone}")
     place = district_raw or state_raw or ""
     if place:
         parts.append(f"Place: {place}")
@@ -795,58 +695,31 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
     return "\n".join(parts).strip()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 4B — Assemble demand letter to other party (landlord, employer, etc.)
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# STEP 4B - Assemble demand letter to other party
+# ---------------------------------------------------------------------------
 def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list: str,
                             other_party: str, other_party_location: str,
                             today_str: str, doc_type: str, facts: dict,
                             disclaimer: str = "", reference_number: str = "") -> str:
-    name      = scalars.get("full_name",    "")
-    address   = scalars.get("full_address", "")
-    district  = scalars.get("district",     "")
-    state     = scalars.get("state",        "")
-    pincode   = scalars.get("pincode",      "")
-    phone     = scalars.get("phone",        "")
-    subject   = scalars.get("subject",      "")
+    name     = scalars.get("full_name",    "")
+    address  = scalars.get("full_address", "")
+    district = scalars.get("district",     "")
+    state    = scalars.get("state",        "")
+    pincode  = scalars.get("pincode",      "")
+    phone    = scalars.get("phone",        "")
+    subject  = scalars.get("subject",      "")
 
     district_raw = scalars.get("district_raw", district)
     state_raw    = scalars.get("state_raw",    state)
 
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
-
-    city_state_pin = []
-    if district: city_state_pin.append(district)
-    if state: city_state_pin.append(state)
-    
-    city_state_str = ", ".join(city_state_pin)
-    if pincode and city_state_str:
-        last_line = f"{city_state_str} - {pincode}"
-    elif city_state_str:
-        last_line = city_state_str
-    elif pincode:
-        last_line = pincode
-    else:
-        last_line = ""
-
-    # Salutation: "Dear Mr./Ms. [Name]" — extract first name for salutation
-    # Use the full other_party name, prefixed with "Mr./Ms." generically
     salutation = f"Dear {other_party}," if other_party else "Dear Sir/Madam,"
 
-    # Compute applicable laws for this doc type
     applicable_laws = get_applicable_laws(doc_type, facts)
-
-    # Split full_address into individual lines at commas, just like the To block
-    def _split_address_lines(raw_addr: str) -> list:
-        if not raw_addr:
-            return []
-        parts_out = [p.strip().rstrip(',').strip() for p in raw_addr.split(',')]
-        return [p for p in parts_out if p]
-
-    addr_lines = _split_address_lines(addr_clean)
+    addr_lines      = _split_address_lines(addr_clean)
 
     parts = []
-    # NO Ref No — removed per user request
     parts.append(f"Date: {datetime.now().strftime('%d/%m/%Y (%A)')}")
     parts.append("")
 
@@ -856,7 +729,7 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
     for line in addr_lines:
         parts.append(line)
     parts.append("")
-    
+
     parts.append("To:")
     if other_party:
         parts.append(other_party.strip().rstrip(','))
@@ -877,12 +750,10 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
 
     if applicable_laws:
         parts.append("Applicable Legal Provisions:")
-        parts.append("")
-        for i, law in enumerate(applicable_laws, 1):
-            parts.append(f"{i}. {law}")
+        for law in applicable_laws:
+            parts.append(f"  \u2022 {law}")
         parts.append("")
 
-    # Demand letters list enclosures only if there are actual items
     has_real_docs = any(
         line.strip() and not line.strip().lower().startswith("relevant documents and evidence will be submitted")
         for line in documents_list.splitlines() if re.match(r'^\d+\.', line.strip())
@@ -890,7 +761,9 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
     if has_real_docs:
         parts.append("Enclosures:")
         for line in documents_list.splitlines():
-            if line.strip(): parts.append(f"   {line.strip()}")
+            stripped = re.sub(r'^\d+\.\s*', '', line.strip())
+            if stripped:
+                parts.append(f"  \u2022 {stripped}")
         parts.append("")
 
     parts.append("Thank you.")
@@ -901,8 +774,10 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
     parts.append("________________________")
     parts.append("(Signature)")
     parts.append("")
-    if name:  parts.append(f"Name: {name}")
-    if phone: parts.append(f"Contact: {phone}")
+    if name:
+        parts.append(f"Name: {name}")
+    if phone:
+        parts.append(f"Contact: {phone}")
     place = district_raw or state_raw or ""
     if place:
         parts.append(f"Place: {place}")
@@ -916,18 +791,18 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
     return "\n".join(parts).strip()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 5 — Readiness score
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# STEP 5 - Readiness score
+# ---------------------------------------------------------------------------
 def _calculate_readiness(intent: str, facts: dict) -> int:
     clean = _clean_facts(facts)
     prompt = (
         f"Score the evidence readiness of this Indian legal complaint from 0 to 100.\n\n"
         f"Legal issue: {intent}\nFacts:\n{_facts_text(clean)}\n\n"
         "Scoring:\n"
-        "- 90-100: Strong documentary evidence (receipts, bank statements, SMS, screenshots, witnesses)\n"
+        "- 90-100: Strong documentary evidence\n"
         "- 60-89:  Some evidence but gaps\n"
-        "- 30-59:  Limited evidence, mostly verbal account\n"
+        "- 30-59:  Limited evidence, mostly verbal\n"
         "- 0-29:   No evidence at all\n\n"
         "Return ONLY an integer. No text."
     )
@@ -939,28 +814,28 @@ def _calculate_readiness(intent: str, facts: dict) -> int:
         return min(100, len(clean) * 10)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 # PUBLIC ENTRY POINT
-# ─────────────────────────────────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 def generate_bilingual_document(intent: str, facts: dict,
                                 user_language: str = "en") -> dict:
     today_str    = date.today().strftime("%d/%m/%Y")
     generated_at = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-    classification    = _classify_intent(intent, facts)
-    doc_type          = classification["doc_type"]
-    authority         = classification["authority"]
+    classification     = _classify_intent(intent, facts)
+    doc_type           = classification["doc_type"]
+    authority          = classification["authority"]
     authority_location = classification.get("authority_location", "India")
-    other_party       = classification["other_party"]
-    other_party_loc   = classification["other_party_location"]
-    ref_prefix        = classification["ref_prefix"]
-    is_demand_letter  = classification["is_demand_letter"]
-    ref_number        = f"SV/{ref_prefix}/{date.today().year}/{date.today().strftime('%m%d')}/001"
+    other_party        = classification["other_party"]
+    other_party_loc    = classification["other_party_location"]
+    ref_prefix         = classification["ref_prefix"]
+    is_demand_letter   = classification["is_demand_letter"]
+    ref_number         = f"SV/{ref_prefix}/{date.today().year}/{date.today().strftime('%m%d')}/001"
 
     readiness_score = _calculate_readiness(intent, facts)
 
     def _build(lang: str, disc: str) -> str:
-        scalars   = _extract_scalars(intent, facts, lang)
+        scalars    = _extract_scalars(intent, facts, lang)
         body, docs = _generate_body(
             intent, facts, lang,
             is_demand_letter=is_demand_letter,
@@ -982,9 +857,10 @@ def generate_bilingual_document(intent: str, facts: dict,
                 reference_number=ref_number,
             )
 
-    english_content   = _build("en",          DISCLAIMER_EN)
-    disc_user         = get_disclaimer(user_language)
-    user_lang_content = english_content if user_language == "en" else _build(user_language, disc_user)
+    # No disclaimer in document body
+    english_content   = _build("en", "")
+    disc_user         = ""
+    user_lang_content = english_content if user_language == "en" else _build(user_language, "")
 
     return {
         "user_language_content": user_lang_content,

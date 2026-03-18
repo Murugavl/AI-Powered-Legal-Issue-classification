@@ -45,12 +45,11 @@ public class SessionService {
         session.setUser(user);
         session.setStatus("ACTIVE");
         session.setConfidenceScore(0.0);
-        // Pre-store the user’s phone from auth so the NLP engine never needs to ask
-        session.setPhoneNumber(phoneNumber);
         session = sessionRepository.save(session);
 
-        // Inject phone as a seed fact before the first user message
-        // Format: special prefix the Python engine recognises to pre-populate user_phone
+        // Inject the user's phone (from auth) as a pre-filled fact so the
+        // NLP engine never needs to ask the user for their phone number.
+        // The __PREFILL__ prefix is stripped by graph.py before classification.
         String seedMsg = "__PREFILL__ user_phone=" + phoneNumber + " || " + request.getInitialText();
         return processInteraction(session, seedMsg);
     }

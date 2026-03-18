@@ -192,11 +192,11 @@ public class BilingualPdfService {
                 continue;
             }
 
-            // Salutation
+            // Salutation — rendered BOLD for emphasis
             if (isSalutation(line)) {
                 flushProse(doc, proseBuf, fBody);
                 doc.add(gap(2));
-                Paragraph p = new Paragraph(line, fBody);
+                Paragraph p = new Paragraph(line, fBold);
                 p.setSpacingAfter(6);
                 doc.add(p);
                 pastSalutation   = true;
@@ -216,12 +216,29 @@ public class BilingualPdfService {
                 continue;
             }
 
-            // Numbered list items — compact indented lines (no bullet symbol)
+            // Bullet point lines (• text) — clean indented items
+            if (line.startsWith("\u2022") || line.startsWith("  \u2022")) {
+                flushProse(doc, proseBuf, fBody);
+                String itemText = line.replaceFirst("^\\s*\\u2022\\s*", "").trim();
+                Paragraph p = new Paragraph();
+                p.add(new Chunk("\u2022  ", fLabel));   // bullet in bold label font
+                p.add(new Chunk(itemText, fBody));
+                p.setIndentationLeft(14);
+                p.setFirstLineIndent(-8);
+                p.setSpacingAfter(1);
+                doc.add(p);
+                continue;
+            }
+
+            // Legacy numbered list items (fallback)
             if (line.matches("^\\d+\\.\\s+.+")) {
                 flushProse(doc, proseBuf, fBody);
                 String itemText = line.replaceFirst("^\\d+\\.\\s*", "").trim();
-                Paragraph p = new Paragraph(itemText, fBody);
-                p.setIndentationLeft(16);
+                Paragraph p = new Paragraph();
+                p.add(new Chunk("\u2022  ", fLabel));
+                p.add(new Chunk(itemText, fBody));
+                p.setIndentationLeft(14);
+                p.setFirstLineIndent(-8);
                 p.setSpacingAfter(1);
                 doc.add(p);
                 continue;
