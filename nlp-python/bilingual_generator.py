@@ -82,6 +82,59 @@ LANGUAGE_NAMES = {
     "mr": "Marathi", "bn": "Bengali","gu": "Gujarati",
 }
 
+# ── Helpers ────────────────────────────────────────────────────────────────
+def strip_markdown(text: str) -> str:
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__',     r'\1', text)
+    text = re.sub(r'#{1,6}\s+',     '',    text)
+    return text.replace("```", "").strip()
+
+def _parse_json(raw: str) -> dict:
+    raw = raw.strip()
+    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
+    raw = re.sub(r'\s*```\s*$',       '', raw, flags=re.MULTILINE)
+    match = re.search(r'\{.*\}', raw, re.DOTALL)
+    if match: raw = match.group(0)
+    return json.loads(raw)
+
+DOC_LABELS = {
+    "en": {
+        "date": "Date:", "from": "From:", "to": "To:", "sub": "Sub:",
+        "respected": "Respected Sir/Madam,", "thank_you": "Thank you.",
+        "faithfully": "Yours faithfully,", "signature": "(Signature)",
+        "name": "Name:", "contact": "Contact:", "place": "Place:",
+        "legal_provs": "Applicable Legal Provisions:",
+        "enclosures": "Enclosures:",
+        "attachments": "Relevant documents attached:",
+        "dear": "Dear",
+    },
+    "ta": {
+        "date": "தேதி:", "from": "அனுப்புநர்:", "to": "பெறுநர்:", "sub": "பொருள்:",
+        "respected": "மதிப்பிற்குரிய ஐயா/அம்மா,", "thank_you": "நன்றி.",
+        "faithfully": "இப்படிக்கு,", "signature": "(கையெழுத்து)",
+        "name": "பெயர்:", "contact": "தொடர்பு எண்:", "place": "இடம்:",
+        "legal_provs": "பொருந்தக்கூடிய சட்ட விதிகள்:",
+        "enclosures": "இணைப்புகள்:",
+        "attachments": "இணைக்கப்பட்டுள்ள ஆவணங்கள்:",
+        "dear": "மதிப்பிற்குரிய",
+    },
+    "hi": {
+        "date": "दिनांक:", "from": "प्रेषक:", "to": "सेवा में:", "sub": "विषय:",
+        "respected": "आदरणीय महोदय/महोदया,", "thank_you": "धन्यवाद।",
+        "faithfully": "भवदीय,", "signature": "(हस्ताक्षर)",
+        "name": "नाम:", "contact": "संपर्क:", "place": "स्थान:",
+        "legal_provs": "लागू कानूनी प्रावधान:",
+        "enclosures": "संलग्नक:",
+        "attachments": "संलग्न दस्तावेज:",
+        "dear": "प्रिय",
+    }
+}
+
+TAMIL_DAYS = {
+    0: "திங்கள்", 1: "செவ்வாய்", 2: "புதன்",
+    3: "வியாழன்", 4: "வெள்ளி", 5: "சனி", 6: "ஞாயிறு"
+}
+
 # Doc types that go DIRECTLY to the other party (not an authority)
 DEMAND_LETTER_TYPES = {
     "legal_notice",      # landlord, tenant, debtor, contractor disputes
@@ -146,23 +199,6 @@ def _facts_text(clean: dict) -> str:
     return "\n".join(
         f"  {k.replace('_', ' ').title()}: {v}" for k, v in clean.items()
     )
-
-
-def _strip_md(text: str) -> str:
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'__(.+?)__',     r'\1', text)
-    text = re.sub(r'#{1,6}\s*',     '',    text)
-    return text.replace("```", "").strip()
-
-
-def _parse_json(raw: str) -> dict:
-    raw = raw.strip()
-    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-    raw = re.sub(r'\s*```\s*$',       '', raw, flags=re.MULTILINE)
-    m = re.search(r'\{.*\}', raw, re.DOTALL)
-    if m:
-        raw = m.group(0)
-    return json.loads(raw)
 
 
 def _norm(s: str) -> str:
@@ -408,8 +444,14 @@ def _generate_body(intent: str, facts: dict, language: str,
             "Paragraph 3: clearly request the authority to take specific action.\n"
         )
 
-    prompt = f"""You are writing a concise formal legal letter for an Indian citizen.
-Write ENTIRELY in {lang_name}.
+    prompt = f"""You are a formal Indian legal document writer.
+Write the letter ENTIRELY in {lang_name} script (except for proper names/IDs).
+
+PRIME DIRECTIVE:
+Use professional, formal legal vocabulary.
+If writing in Tamil, use proper formal Tamil (not conversational).
+Ensure the tone is respectful yet factual.
+Do NOT use robotic or overly simplified translations.
 
 Legal issue: "{intent}"
 
@@ -452,7 +494,7 @@ Rules:
             SystemMessage(content="Legal letter writer. Plain text only. No markdown."),
             HumanMessage(content=prompt)
         ])
-        raw = _strip_md(resp.content)
+        raw = strip_markdown(resp.content)
     except Exception as e:
         print(f"[_generate_body] error: {e}")
         raw = ("I respectfully submit the following.\n\n"
@@ -606,16 +648,21 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
                        authority: str, authority_location: str, today_str: str,
                        doc_type: str, facts: dict,
                        disclaimer: str = "", reference_number: str = "") -> str:
+    lbl = DOC_LABELS.get(scalars.get("user_language", "en"), DOC_LABELS["en"])
+    language = scalars.get("user_language", "en")
+
     name     = scalars.get("full_name",    "")
     address  = scalars.get("full_address", "")
-    district = scalars.get("district",     "")
-    state    = scalars.get("state",        "")
-    pincode  = scalars.get("pincode",      "")
     phone    = scalars.get("phone",        "")
     subject  = scalars.get("subject",      "")
+    district_raw = scalars.get("district_raw", "")
+    state_raw    = scalars.get("state_raw",    "")
 
-    district_raw = scalars.get("district_raw", district)
-    state_raw    = scalars.get("state_raw",    state)
+    # Format date with regional day name if Tamil
+    today    = date.today()
+    day_name = TAMIL_DAYS[today.weekday()] if language == "ta" else today.strftime("%A")
+    date_str = today.strftime("%d/%m/%Y") + f" ({day_name})"
+    today_str = date_str  # sync
 
     auth_loc   = authority_location if authority_location else "India"
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
@@ -624,17 +671,17 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
     addr_lines      = _split_address_lines(addr_clean)
 
     parts = []
-    parts.append(f"Date: {datetime.now().strftime('%d/%m/%Y (%A)')}")
+    parts.append(f"{lbl['date']} {date_str}")
     parts.append("")
 
-    parts.append("From:")
+    parts.append(lbl['from'])
     if name:
         parts.append(name.strip().rstrip(','))
     for line in addr_lines:
         parts.append(line)
     parts.append("")
 
-    parts.append("To:")
+    parts.append(lbl['to'])
     if authority:
         parts.append(authority.strip().rstrip(','))
     if auth_loc:
@@ -649,9 +696,9 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
             if loc_line and loc_line != authority.strip():
                 parts.append(loc_line)
     parts.append("")
-    parts.append(f"Sub: {subject}")
+    parts.append(f"{lbl['sub']} {subject}")
     parts.append("")
-    parts.append("Respected Sir/Madam,")
+    parts.append(lbl['respected'])
     parts.append("")
 
     paragraphs = [p.strip() for p in re.split(r'\n{2,}', body_paragraphs) if p.strip()]
@@ -659,33 +706,33 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
     parts.append("")
 
     if applicable_laws:
-        parts.append("Applicable Legal Provisions:")
+        parts.append(lbl['legal_provs'])
         for law in applicable_laws:
             parts.append(f"  \u2022 {law}")
         parts.append("")
 
-    parts.append("Relevant documents attached:")
+    parts.append(lbl['attachments'])
     for line in documents_list.splitlines():
         stripped = re.sub(r'^\d+\.\s*', '', line.strip())
         if stripped:
             parts.append(f"  \u2022 {stripped}")
     parts.append("")
-    parts.append("Thank you.")
+    parts.append(lbl['thank_you'])
     parts.append("")
-    parts.append("Yours faithfully,")
+    parts.append(lbl['faithfully'])
     parts.append("")
     parts.append("")
     parts.append("________________________")
-    parts.append("(Signature)")
+    parts.append(lbl['signature'])
     parts.append("")
     if name:
-        parts.append(f"Name: {name}")
+        parts.append(f"{lbl['name']} {name}")
     if phone:
-        parts.append(f"Contact: {phone}")
+        parts.append(f"{lbl['contact']} {phone}")
     place = district_raw or state_raw or ""
     if place:
-        parts.append(f"Place: {place}")
-    parts.append(f"Date: {today_str}")
+        parts.append(f"{lbl['place']} {place}")
+    parts.append(f"{lbl['date']} {today_str}")
     if disclaimer:
         parts.append("")
         parts.append("DISCLAIMER")
@@ -702,35 +749,41 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
                             other_party: str, other_party_location: str,
                             today_str: str, doc_type: str, facts: dict,
                             disclaimer: str = "", reference_number: str = "") -> str:
+    lbl = DOC_LABELS.get(scalars.get("user_language", "en"), DOC_LABELS["en"])
+    if scalars.get("user_language") == "en": lbl = DOC_LABELS["en"] # fallback
+
     name     = scalars.get("full_name",    "")
     address  = scalars.get("full_address", "")
-    district = scalars.get("district",     "")
-    state    = scalars.get("state",        "")
-    pincode  = scalars.get("pincode",      "")
     phone    = scalars.get("phone",        "")
     subject  = scalars.get("subject",      "")
+    district_raw = scalars.get("district_raw", "")
+    state_raw    = scalars.get("state_raw",    "")
 
-    district_raw = scalars.get("district_raw", district)
-    state_raw    = scalars.get("state_raw",    state)
+    # Format date with regional day name if Tamil
+    today    = date.today()
+    language = scalars.get("user_language", "en")
+    day_name = TAMIL_DAYS[today.weekday()] if language == "ta" else today.strftime("%A")
+    date_str = today.strftime("%d/%m/%Y") + f" ({day_name})"
+    today_str = date_str # sync
 
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
-    salutation = f"Dear {other_party}," if other_party else "Dear Sir/Madam,"
+    salutation = f"{lbl['dear']} {other_party}," if other_party else lbl['respected']
 
     applicable_laws = get_applicable_laws(doc_type, facts)
     addr_lines      = _split_address_lines(addr_clean)
 
     parts = []
-    parts.append(f"Date: {datetime.now().strftime('%d/%m/%Y (%A)')}")
+    parts.append(f"{lbl['date']} {date_str}")
     parts.append("")
 
-    parts.append("From:")
+    parts.append(lbl['from'])
     if name:
         parts.append(name.strip().rstrip(','))
     for line in addr_lines:
         parts.append(line)
     parts.append("")
 
-    parts.append("To:")
+    parts.append(lbl['to'])
     if other_party:
         parts.append(other_party.strip().rstrip(','))
     if other_party_location:
@@ -739,7 +792,7 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
             if loc_part:
                 parts.append(loc_part)
     parts.append("")
-    parts.append(f"Sub: {subject}")
+    parts.append(f"{lbl['sub']} {subject}")
     parts.append("")
     parts.append(salutation)
     parts.append("")
@@ -749,7 +802,7 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
     parts.append("")
 
     if applicable_laws:
-        parts.append("Applicable Legal Provisions:")
+        parts.append(lbl['legal_provs'])
         for law in applicable_laws:
             parts.append(f"  \u2022 {law}")
         parts.append("")
@@ -759,29 +812,29 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
         for line in documents_list.splitlines() if re.match(r'^\d+\.', line.strip())
     )
     if has_real_docs:
-        parts.append("Enclosures:")
+        parts.append(lbl['enclosures'])
         for line in documents_list.splitlines():
             stripped = re.sub(r'^\d+\.\s*', '', line.strip())
             if stripped:
                 parts.append(f"  \u2022 {stripped}")
         parts.append("")
 
-    parts.append("Thank you.")
+    parts.append(lbl['thank_you'])
     parts.append("")
-    parts.append("Yours faithfully,")
+    parts.append(lbl['faithfully'])
     parts.append("")
     parts.append("")
     parts.append("________________________")
-    parts.append("(Signature)")
+    parts.append(lbl['signature'])
     parts.append("")
     if name:
-        parts.append(f"Name: {name}")
+        parts.append(f"{lbl['name']} {name}")
     if phone:
-        parts.append(f"Contact: {phone}")
+        parts.append(f"{lbl['contact']} {phone}")
     place = district_raw or state_raw or ""
     if place:
-        parts.append(f"Place: {place}")
-    parts.append(f"Date: {today_str}")
+        parts.append(f"{lbl['place']} {place}")
+    parts.append(f"{lbl['date']} {today_str}")
     if disclaimer:
         parts.append("")
         parts.append("DISCLAIMER")
@@ -834,33 +887,87 @@ def generate_bilingual_document(intent: str, facts: dict,
 
     readiness_score = _calculate_readiness(intent, facts)
 
-    def _build(lang: str, disc: str) -> str:
-        scalars    = _extract_scalars(intent, facts, lang)
+    # ── Pre-translate header info/facts for bilingual consistency ───────────
+    translated_classification = classification.copy()
+    translated_facts          = facts.copy()
+
+    if user_language != "en":
+        # 1. Translate Classification fields to User Language
+        fields_to_translate = ["authority", "authority_location", "other_party", "other_party_location"]
+        text_to_translate   = " | ".join(str(classification.get(f, "")) for f in fields_to_translate)
+        
+        prompt = f"""You are a legal translator. Translate these Indian legal entity names and locations into formal {LANGUAGE_NAMES.get(user_language, 'Tamil')}.
+Return as a pip-separated list in the same order. 
+
+TEXT: {text_to_translate}
+
+RULES:
+- Formal vocabulary only.
+- Respond ONLY with the piped translations. No commentary.
+"""
+        try:
+            resp = llm.invoke([HumanMessage(content=prompt)])
+            vals = [v.strip().strip('"').strip("'") for v in resp.content.split("|")]
+            for i, f in enumerate(fields_to_translate):
+                if i < len(vals) and vals[i]: 
+                    translated_classification[f] = vals[i]
+        except Exception: pass
+
+        # 2. Translate Facts to English (for the English copy)
+        # Identify non-English values in facts
+        facts_to_translate = {}
+        for k, v in facts.items():
+            if v and any(c > '\u007f' for c in str(v)): # Detect non-ASCII/Indic characters
+                facts_to_translate[k] = v
+        
+        if facts_to_translate:
+            prompt = f"""You are a professional legal translator. Translate these user-provided details into natural, formal English.
+Keep proper names accurate. Return as a JSON object with the same keys.
+
+DETAILS: {json.dumps(facts_to_translate, ensure_ascii=False)}
+
+Return valid JSON only. No markdown.
+"""
+            try:
+                resp = llm.invoke([HumanMessage(content=prompt)])
+                trans_facts = _parse_json(strip_markdown(resp.content))
+                for k, v in trans_facts.items(): 
+                    if v: translated_facts[k] = v
+            except Exception as e:
+                print(f"[generate_bilingual_document] Reverse translation failed: {e}")
+
+    def _build(lang: str, disc: str, current_facts: dict, cur_class: dict) -> str:
+        # Use lang-specific scalars and body
+        # Pass the desired document language to LLM prompts
+        scalars    = _extract_scalars(intent, current_facts, lang)
+        scalars["user_language"] = lang # To help assembly function pick labels
+        
         body, docs = _generate_body(
-            intent, facts, lang,
+            intent, current_facts, lang,
             is_demand_letter=is_demand_letter,
-            other_party=other_party,
+            other_party=cur_class["other_party"],
         )
         if is_demand_letter:
             return _assemble_demand_letter(
                 scalars, body, docs,
-                other_party, other_party_loc,
-                today_str, doc_type, facts,
+                cur_class["other_party"], cur_class["other_party_location"],
+                today_str, doc_type, current_facts,
                 disclaimer=disc,
                 reference_number=ref_number,
             )
         else:
             return _assemble_petition(
                 scalars, body, docs,
-                authority, authority_location, today_str, doc_type, facts,
+                cur_class["authority"], cur_class["authority_location"], today_str, doc_type, current_facts,
                 disclaimer=disc,
                 reference_number=ref_number,
             )
 
-    # No disclaimer in document body
-    english_content   = _build("en", "")
+    # English copy uses translated facts (mostly English now) and original English classification
+    english_content   = _build("en", "", translated_facts, classification)
     disc_user         = ""
-    user_lang_content = english_content if user_language == "en" else _build(user_language, "")
+    # User lang copy uses original user facts and translated classification
+    user_lang_content = english_content if user_language == "en" else _build(user_language, "", facts, translated_classification)
 
     return {
         "user_language_content": user_lang_content,

@@ -229,17 +229,20 @@ def classify_and_plan_node(state: LegalState):
     last_user_msg   = messages[-1].content.strip() if messages else ""
     lower_msg       = last_user_msg.lower()
 
-    # ── Pre-fill facts injected by Java backend (phone number from auth token) ────
+    # ── Pre-fill facts injected by Java backend (phone number, name etc.) ────
     if last_user_msg.startswith("__PREFILL__"):
         prefill_part, _, actual_msg = last_user_msg.partition(" || ")
-        for token in prefill_part.replace("__PREFILL__", "").split():
-            if "=" in token:
-                k, v = token.split("=", 1)
-                k, v = k.strip(), v.strip()
-                if is_real_value(v) and k not in collected_facts:
-                    collected_facts[k] = v
-                    if k not in answered_keys:
-                        answered_keys.append(k)
+        
+        # Robustly parse key=value or key="multi word value"
+        import re
+        tokens = re.findall(r'(\w+)=([^"\s]+|"[^"]+")', prefill_part)
+        for k, v in tokens:
+            v_clean = v.strip('"')
+            if is_real_value(v_clean) and k not in collected_facts:
+                collected_facts[k] = v_clean
+                if k not in answered_keys:
+                    answered_keys.append(k)
+                    
         last_user_msg = actual_msg.strip()
         lower_msg     = last_user_msg.lower()
 
@@ -519,13 +522,15 @@ Return valid JSON only. No markdown.
         current_q_key.replace("_", " ").title()
     )
 
-    extract_prompt = f"""Extract the answer for this question.
+    extract_prompt = f"""Extract the factual answer for this question from the user's message.
 
 Question: "{current_q_key}" — {current_label}
 User replied: "{last_user_msg}"
 
 Rules:
-- Extract exactly what the user stated.
+- EXTRACT ONLY THE DATA. Strip conversational filler (e.g. "My name is", "I live at", "My address is").
+- If user said "My name is S. Karthik", extract ONLY "S. Karthik".
+- Keep original casing and script.
 - If user said "no", "none", "don't know" → value = "Not available"
 - NEVER extract user_full_name, user_phone, user_full_address unless that was the exact question.
 - Do NOT invent or infer anything.
@@ -741,16 +746,19 @@ Rules: No markdown. Plain text only. Return ONLY the message.
     if lang == "en":
         response = cat_line + ack + fixed_question
     else:
-        translate_prompt = f"""Translate this question into language code: {lang}
+        translate_prompt = f"""Translate this entire text into language code: {lang}
+        
+TEXT: "{cat_line + ack + fixed_question}"
 
-English: "{fixed_question}"
-{"Also prepend (translated): " + repr(cat_line) if cat_line else ""}
-{"Also prepend a brief acknowledgment like 'Thank you, I have noted that.'" if ack else ""}
-
-Rules: ONE question only. Short and polite. No markdown. Return ONLY the translated text.
+RULES:
+1. RESPONSE MUST BE IN {lang.upper()} SCRIPT ONLY (e.g. Tamil characters for Tamil).
+2. DO NOT USE "Tanglish" or Romanized script for regional words. No "Vanakkam", only "வணக்கம்".
+3. Keep it formal, polite, and strictly one or two short sentences.
+4. Explanations of legal terms can be in primary script. No markdown.
+5. Return ONLY the translated string.
 """
         resp     = llm.invoke([
-            SystemMessage(content="Translator. Plain text only."),
+            SystemMessage(content="Professional legal translator. Regional script only."),
             HumanMessage(content=translate_prompt)
         ])
         response = strip_markdown(resp.content.strip())

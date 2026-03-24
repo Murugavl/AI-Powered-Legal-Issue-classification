@@ -4,7 +4,8 @@ import { sessionAPI, documentAPI } from '../../utils/api';
 import ThemeToggle from '../ThemeToggle/ThemeToggle';
 import VoiceRecorder from './VoiceRecorder';
 import { useAuth } from '../../context/AuthContext';
-import logo from '/satta_vizhi_logo.png';
+// For Vite/React apps, files in the 'public' folder should be accessed via root paths
+const logo = '/satta_vizhi_logo.png';
 import './CaseWizard.css';
 
 /* ─────────────────────────────────────────────
@@ -205,71 +206,81 @@ function CaseWizard() {
     };
 
     // ── Open an existing session from sidebar ───
-    const openSession = (s) => {
+    const openSession = async (s) => {
         setSessionId(s.sessionId);
-        setCurrentIntent(s.detectedIntent || '');
-        setEntities({});
-        setLatestData({ readinessScore: s.readinessScore });
-
-        const isCompleted = s.status === 'COMPLETED';
-        setIsComplete(isCompleted);
-
-        // Restore cached document payload from sessionStorage if available
-        let cachedPayload = null;
+        setLoading(true); // show loading during history fetch
         try {
-            const cached = sessionStorage.getItem(`doc_${s.sessionId}`);
-            if (cached) {
-                cachedPayload = JSON.parse(cached);
-                setDocumentPayload(cachedPayload);
+            const res = await sessionAPI.getStatus(s.sessionId);
+            const data = res.data;
+
+            // Restore session state
+            setCurrentIntent(data.detectedIntent || '');
+            setEntities(data.extractedEntities || {});
+            setLatestData({ readinessScore: data.readinessScore });
+            setIsComplete(data.complete || (data.status === 'COMPLETED'));
+
+            if (data.documentPayload) {
+                try {
+                    const parsed = typeof data.documentPayload === 'string' 
+                        ? JSON.parse(data.documentPayload) 
+                        : data.documentPayload;
+                    setDocumentPayload(parsed);
+                } catch (e) {
+                    console.error("Payload parse error in openSession", e);
+                    setDocumentPayload({ raw: data.documentPayload });
+                }
             } else {
                 setDocumentPayload(null);
             }
-        } catch { setDocumentPayload(null); }
 
-        if (sessionChats[s.sessionId]) {
-            // Restore full chat from memory
-            setMessages(sessionChats[s.sessionId]);
-        } else if (isCompleted) {
-            // Completed session
-            const payloadNote = cachedPayload
-                ? '\n\nUse the buttons below to preview or re-download your document.'
-                : '\n\nThe document payload is not cached in this browser. Start a new case to regenerate.';
-            setMessages([{
-                id: 'restored', sender: 'system', type: 'normal',
-                text: `✅ Document generated: ${intentLabel(s.detectedIntent)}${payloadNote}`,
-            }]);
-        } else {
-            // Active in-progress session
-            setMessages([{
-                id: 'restored', sender: 'system', type: 'normal',
-                text: `Session restored: ${intentLabel(s.detectedIntent)}\n⏳ In progress\n\nContinue from where you left off — type your next answer below.`,
-            }]);
+            if (data.history && data.history.length > 0) {
+                setMessages(data.history);
+                setSessionChats(prev => ({ ...prev, [s.sessionId]: data.history }));
+            } else if (!data.complete) {
+                // For active sessions with no history (new turn), show the greeting
+                setMessages([{
+                    id: 'greeting', sender: 'system', type: 'normal',
+                    text: 'Vanakkam! I am your AI Legal Document Assistant.\nI am not a lawyer and I do not give legal advice — I only help you prepare documents.\n\nPlease describe your legal issue in your own words.',
+                }]);
+            } else {
+                // Completed sessions with no history records yet: show nothing extra
+                setMessages([]); 
+            }
+        } catch (err) {
+            console.error('Failed to load session details', err);
+            addMsg('system', 'Failed to load session history. Please try again.');
+        } finally {
+            setLoading(false);
         }
     };
 
     // ── Apply API response ──────────────────────
     const applyResponse = (data) => {
         setLatestData(data);
-        setEntities(data.extractedEntities || {});
         if (data.detectedIntent) setCurrentIntent(data.detectedIntent);
+        if (data.extractedEntities) setEntities(data.extractedEntities || {});
+        
+        const isNowComplete = data.complete || (data.status === 'COMPLETED');
+        setIsComplete(isNowComplete);
 
-        if (data.complete && data.documentPayload) {
-            let parsed = null;
-            try { parsed = JSON.parse(data.documentPayload); }
-            catch { parsed = { raw: data.documentPayload }; }
-            setDocumentPayload(parsed);
-            setIsComplete(true);
-            // Cache in sessionStorage so we can restore it when the session is reopened
+        if (data.documentPayload) {
             try {
-                // sessionId is in React state — use a ref trick via closure capture
-                // We also store under data.sessionId if available
-                const sid = data.sessionId || sessionId;
-                if (sid) sessionStorage.setItem(`doc_${sid}`, data.documentPayload);
-            } catch {}
-            addMsg('system', data.message || 'Your legal document has been prepared. You can preview and download it below.');
-            loadSessions();
-        } else if (data.message) {
+                const parsed = typeof data.documentPayload === 'string' 
+                    ? JSON.parse(data.documentPayload) 
+                    : data.documentPayload;
+                setDocumentPayload(parsed);
+            } catch (e) {
+                console.error("Payload parse error in applyResponse", e);
+                setDocumentPayload({ raw: data.documentPayload });
+            }
+        }
+
+        if (data.message) {
             addMsg('system', data.message);
+        }
+
+        if (isNowComplete) {
+            loadSessions(); // Refresh sidebar
         }
     };
 

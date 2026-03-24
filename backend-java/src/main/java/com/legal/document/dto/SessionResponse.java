@@ -14,6 +14,27 @@ public class SessionResponse {
     private Integer readinessScore;
     private String documentPayload;  // JSON string of bilingual document (when isComplete=true)
     private List<String> nextSteps;   // practical next steps after document generation
+    private List<MessageDTO> history; // full session history
+
+    public static class MessageDTO {
+        private String sender; // 'system' or 'user'
+        private String text;
+        private Long id;
+
+        public MessageDTO() {}
+        public MessageDTO(String sender, String text, Long id) {
+            this.sender = sender;
+            this.text = text;
+            this.id = id;
+        }
+
+        public String getSender() { return sender; }
+        public void setSender(String v) { this.sender = v; }
+        public String getText() { return text; }
+        public void setText(String v) { this.text = v; }
+        public Long getId() { return id; }
+        public void setId(Long v) { this.id = v; }
+    }
 
     public SessionResponse() {}
 
@@ -46,4 +67,7 @@ public class SessionResponse {
 
     public List<String> getNextSteps()                        { return nextSteps; }
     public void         setNextSteps(List<String> v)          { this.nextSteps = v; }
+
+    public List<MessageDTO> getHistory()                      { return history; }
+    public void              setHistory(List<MessageDTO> v)   { this.history = v; }
 }

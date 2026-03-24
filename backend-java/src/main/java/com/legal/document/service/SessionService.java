@@ -12,6 +12,7 @@ import com.legal.document.repository.CaseSessionRepository;
 import com.legal.document.repository.ExtractedEntityRepository;
 import com.legal.document.repository.UserRepository;
 import com.legal.document.repository.DBFileRepository;
+import com.legal.document.entity.ExtractedEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,7 +51,8 @@ public class SessionService {
         // Inject the user's phone (from auth) as a pre-filled fact so the
         // NLP engine never needs to ask the user for their phone number.
         // The __PREFILL__ prefix is stripped by graph.py before classification.
-        String seedMsg = "__PREFILL__ user_phone=" + phoneNumber + " || " + request.getInitialText();
+        String fullName = user.getFullName() != null ? user.getFullName() : "";
+        String seedMsg = "__PREFILL__ user_phone=" + phoneNumber + " user_full_name=\"" + fullName + "\" || " + request.getInitialText();
         return processInteraction(session, seedMsg);
     }
 
@@ -141,6 +143,35 @@ public class SessionService {
         response.setStatus(session.getStatus());
         response.setDetectedIntent(session.getDetectedIntent());
         response.setReadinessScore(session.getReadinessScore());
+        response.setDocumentPayload(session.getDocumentPayload());
+        response.setComplete("COMPLETED".equals(session.getStatus()));
+
+        // Populate entities
+        List<ExtractedEntity> entities = entityRepository.findBySession_SessionId(sessionId);
+        Map<String, String> entityMap = entities.stream()
+                .collect(Collectors.toMap(ExtractedEntity::getEntityKey, ExtractedEntity::getEntityValue, (a, b) -> a));
+        response.setExtractedEntities(entityMap);
+
+        // Populate history
+        List<CaseAnswer> answers = answerRepository.findBySession_SessionIdOrderByCreatedAtAsc(sessionId);
+        List<SessionResponse.MessageDTO> history = new ArrayList<>();
+        
+        for (CaseAnswer ans : answers) {
+            if (ans.getUserResponse() != null && !ans.getUserResponse().isBlank()) {
+                // Skip prefill messages for history display
+                String text = ans.getUserResponse();
+                if (text.startsWith("__PREFILL__")) {
+                    int idx = text.indexOf(" || ");
+                    if (idx != -1) text = text.substring(idx + 4);
+                }
+                history.add(new SessionResponse.MessageDTO("user", text, ans.getId()));
+            }
+            if (ans.getQuestionText() != null && !ans.getQuestionText().isBlank()) {
+                history.add(new SessionResponse.MessageDTO("system", ans.getQuestionText(), ans.getId()));
+            }
+        }
+        response.setHistory(history);
+
         response.setMessage("Session is " + session.getStatus().toLowerCase() + ".");
         return response;
     }
@@ -183,6 +214,7 @@ public class SessionService {
     // ----------------------------------------------------------------
     // CORE INTERACTION — calls Python NLP, saves to DB, returns DTO
     // ----------------------------------------------------------------
+    @SuppressWarnings("unchecked")
     private SessionResponse processInteraction(CaseSession session, String userMessage) {
         // 1. Persist user message
         CaseAnswer userEntry = new CaseAnswer();
@@ -216,9 +248,48 @@ public class SessionService {
 
         if (Boolean.TRUE.equals(isDoc)) {
             session.setStatus("COMPLETED");
+            
+            // Extract and persist document payload
+            if (content.startsWith("DOCUMENT_READY")) {
+                String docPayload = content.substring("DOCUMENT_READY".length()).trim();
+                session.setDocumentPayload(docPayload);
+                
+                // Force readiness score update from payload if it has one
+                try {
+                    com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+                    com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(docPayload);
+                    if (node.has("readiness_score")) {
+                        session.setReadinessScore(node.get("readiness_score").asInt(session.getReadinessScore() != null ? session.getReadinessScore() : 0));
+                    }
+                } catch (Exception ignored) {}
+            }
         }
 
         sessionRepository.save(session);
+        sessionRepository.flush(); // Explicit flush to ensure persistence within the transaction
+
+        // Persist entities to database for session restoration
+        try {
+            Map<String, Object> entities = (Map<String, Object>) agentResponse.get("entities");
+            if (entities != null) {
+                for (Map.Entry<String, Object> entry : entities.entrySet()) {
+                    if (entry.getValue() != null) {
+                        String key = entry.getKey();
+                        String val = String.valueOf(entry.getValue());
+                        
+                        ExtractedEntity entity = entityRepository.findBySession_SessionIdAndEntityKey(
+                                session.getSessionId(), key).orElse(new ExtractedEntity());
+                        
+                        entity.setSession(session);
+                        entity.setEntityKey(key);
+                        entity.setEntityValue(val);
+                        entityRepository.save(entity);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
 
         // 5. Build and return DTO
         return buildResponse(session, agentResponse);
@@ -240,22 +311,12 @@ public class SessionService {
         Boolean isConf  = (Boolean) agentResponse.get("is_confirmation");
 
         if (Boolean.TRUE.equals(isDoc) && content.startsWith("DOCUMENT_READY")) {
-            // Strip the prefix — send only the clean JSON payload to the frontend
-            String docPayload = content.substring("DOCUMENT_READY".length()).trim();
+            // Use the payload already set/extracted
+            String docPayload = session.getDocumentPayload();
             response.setDocumentPayload(docPayload);
             response.setMessage("Your legal document has been prepared. You can preview and download it below.");
             response.setComplete(true);
-            // Use readiness score from the document payload (recalculated at generation time)
-            int finalScore = session.getReadinessScore() != null ? session.getReadinessScore() : 0;
-            try {
-                com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
-                com.fasterxml.jackson.databind.JsonNode node = mapper.readTree(docPayload);
-                if (node.has("readiness_score")) {
-                    finalScore = node.get("readiness_score").asInt(finalScore);
-                    session.setReadinessScore(finalScore);
-                }
-            } catch (Exception ignored) {}
-            response.setReadinessScore(finalScore);
+            response.setReadinessScore(session.getReadinessScore());
         } else {
             // Strip any accidental markdown the LLM may produce
             String cleanContent = content.replace("**", "").replace("__", "");

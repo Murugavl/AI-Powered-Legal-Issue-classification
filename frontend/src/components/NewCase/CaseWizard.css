@@ -137,12 +137,29 @@
     object-fit: contain;
     flex-shrink: 0;
 }
+.cw-sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.5rem 0;
+    width: 100%;
+    margin-bottom: 0.5rem;
+}
+.cw-brand-logo {
+    width: 32px;
+    height: 32px;
+    object-fit: contain;
+    border-radius: 50%;
+    background-color: #ffffff;  /* Contrast for the gold logo */
+    padding: 3px;
+    flex-shrink: 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
+}
 .cw-brand-name {
     font-weight: 700;
-    font-size: 0.95rem;
+    font-size: 1rem;
     color: var(--cw-text);
     white-space: nowrap;
-    flex: 1;
 }
 .cw-collapse-btn {
     background: none;
@@ -390,8 +407,11 @@
 .cw-avatar-img {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     border-radius: 50%;
+    padding: 4px; /* Space around the icon inside the circle */
+    background-color: #ffffff; /* Make the logo pop */
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,0.05);
 }
 
 /* Bubbles */

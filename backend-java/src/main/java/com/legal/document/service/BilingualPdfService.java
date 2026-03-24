@@ -137,22 +137,28 @@ public class BilingualPdfService {
             }
 
             // Ref No:
-            if (line.startsWith("Ref No:")) {
+            if (line.startsWith("Ref No:") || line.startsWith("\u0b95\u0bc1\u0bb1\u0bbf\u0baa\u0bcd\u0baa\u0bc1 \u0b8e\u0ba3\u0bcd:") || line.startsWith("\u0938\u0902\u0926\u0930\u094d\u092d \u0938\u0902\u0916\u094d\u092f\u093e:")) {
                 flushProse(doc, proseBuf, fBody);
+                int colonIdx = line.indexOf(':');
+                String labelPart = line.substring(0, colonIdx + 1);
+                String valuePart = line.substring(colonIdx + 1).trim();
                 Paragraph p = new Paragraph();
-                p.add(new Chunk("Ref No: ", fLabel));
-                p.add(new Chunk(line.substring("Ref No:".length()).trim(), fMeta));
+                p.add(new Chunk(labelPart + " ", fLabel));
+                p.add(new Chunk(valuePart, fMeta));
                 p.setSpacingAfter(1);
                 doc.add(p);
                 continue;
             }
 
             // Date:
-            if (line.startsWith("Date:")) {
+            if (line.startsWith("Date:") || line.startsWith("\u0ba4\u0bc7\u0ba4\u0bbf:") || line.startsWith("\u0926\u093f\u0928\u093e\u0902\u0915:")) {
                 flushProse(doc, proseBuf, fBody);
+                int colonIdx = line.indexOf(':');
+                String labelPart = line.substring(0, colonIdx + 1);
+                String valuePart = line.substring(colonIdx + 1).trim();
                 Paragraph p = new Paragraph();
-                p.add(new Chunk("Date: ", fLabel));
-                p.add(new Chunk(line.substring("Date:".length()).trim(),
+                p.add(new Chunk(labelPart + " ", fLabel));
+                p.add(new Chunk(valuePart,
                         inSignatureBlock ? fBody : fMeta));
                 p.setSpacingAfter(inSignatureBlock ? 2 : 1);
                 doc.add(p);
@@ -160,33 +166,35 @@ public class BilingualPdfService {
             }
 
             // From / From:
-            if (line.equals("From") || line.equals("From:")) {
+            if (line.equals("From") || line.equals("From:") || line.equals("\u0b85\u0ba3\u0bc1\u0baa\u0bcd\u0baa\u0bc1\u0ba8\u0bc1\u0bb3\u0bcd:") || line.equals("\u0b85\u0ba3\u0bc1\u0baa\u0bcd\u0baa\u0bc1\u0ba8\u0bb0\u0bcd:") || line.equals("\u092a\u094d\u0930\u0947\u0937\u0915:")) {
                 flushProse(doc, proseBuf, fBody);
                 doc.add(gap(2));
-                Paragraph p = new Paragraph("From", fBold);
+                Paragraph p = new Paragraph(line.replace(":", ""), fBold);
                 p.setSpacingAfter(1);
                 doc.add(p);
                 continue;
             }
 
             // To / To:
-            if (line.equals("To") || line.equals("To:")) {
+            if (line.equals("To") || line.equals("To:") || line.equals("\u0baa\u0bc6\u0bb1\u0bc1\u0ba8\u0bb0\u0bcd:") || line.equals("\u0938\u0947\u0935\u093e \u092e\u0947\u0902:")) {
                 flushProse(doc, proseBuf, fBody);
                 doc.add(gap(4));
-                Paragraph p = new Paragraph("To", fBold);
+                Paragraph p = new Paragraph(line.replace(":", ""), fBold);
                 p.setSpacingAfter(1);
                 doc.add(p);
                 continue;
             }
 
             // Sub:
-            if (line.startsWith("Sub:")) {
+            if (line.startsWith("Sub:") || line.startsWith("\u0baa\u0bca\u0bb0\u0bc1\u0bb3\u0bcd:") || line.startsWith("\u0935\u093f\u0937\u092f:")) {
                 flushProse(doc, proseBuf, fBody);
                 doc.add(gap(4));
-                String subText = line.substring("Sub:".length()).trim();
+                int colonIdx = line.indexOf(':');
+                String labelPart = line.substring(0, colonIdx + 1);
+                String valuePart = line.substring(colonIdx + 1).trim();
                 Paragraph p = new Paragraph();
-                p.add(new Chunk("Sub: ", fSubj));
-                p.add(new Chunk(subText, fBold));
+                p.add(new Chunk(labelPart + " ", fSubj));
+                p.add(new Chunk(valuePart, fBold));
                 p.setSpacingAfter(4);
                 doc.add(p);
                 continue;

@@ -37,6 +37,9 @@ public class CaseSession {
     @Column(name = "readiness_status")
     private String readinessStatus; // READY, WEAK_CASE, NOT_ACTIONABLE
 
+    @Column(name = "document_payload", columnDefinition = "TEXT")
+    private String documentPayload;
+
     @Column(name = "filing_guidance", columnDefinition = "TEXT")
     private String filingGuidance; // JSON string of filing advice
 
@@ -137,6 +140,14 @@ public class CaseSession {
 
     public void setReadinessStatus(String readinessStatus) {
         this.readinessStatus = readinessStatus;
+    }
+
+    public String getDocumentPayload() {
+        return documentPayload;
+    }
+
+    public void setDocumentPayload(String documentPayload) {
+        this.documentPayload = documentPayload;
     }
 
     public String getFilingGuidance() {
