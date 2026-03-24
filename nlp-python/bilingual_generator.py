@@ -82,21 +82,6 @@ LANGUAGE_NAMES = {
     "mr": "Marathi", "bn": "Bengali","gu": "Gujarati",
 }
 
-# ── Helpers ────────────────────────────────────────────────────────────────
-def strip_markdown(text: str) -> str:
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'__(.+?)__',     r'\1', text)
-    text = re.sub(r'#{1,6}\s+',     '',    text)
-    return text.replace("```", "").strip()
-
-def _parse_json(raw: str) -> dict:
-    raw = raw.strip()
-    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
-    raw = re.sub(r'\s*```\s*$',       '', raw, flags=re.MULTILINE)
-    match = re.search(r'\{.*\}', raw, re.DOTALL)
-    if match: raw = match.group(0)
-    return json.loads(raw)
-
 DOC_LABELS = {
     "en": {
         "date": "Date:", "from": "From:", "to": "To:", "sub": "Sub:",
@@ -131,8 +116,8 @@ DOC_LABELS = {
 }
 
 TAMIL_DAYS = {
-    0: "திங்கள்", 1: "செவ்வாய்", 2: "புதன்",
-    3: "வியாழன்", 4: "வெள்ளி", 5: "சனி", 6: "ஞாயிறு"
+    "Monday": "திங்கள்", "Tuesday": "செவ்வாய்", "Wednesday": "புதன்",
+    "Thursday": "வியாழன்", "Friday": "வெள்ளி", "Saturday": "சனி", "Sunday": "ஞாயிறு"
 }
 
 # Doc types that go DIRECTLY to the other party (not an authority)
@@ -199,6 +184,23 @@ def _facts_text(clean: dict) -> str:
     return "\n".join(
         f"  {k.replace('_', ' ').title()}: {v}" for k, v in clean.items()
     )
+
+
+def _strip_md(text: str) -> str:
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'__(.+?)__',     r'\1', text)
+    text = re.sub(r'#{1,6}\s*',     '',    text)
+    return text.replace("```", "").strip()
+
+
+def _parse_json(raw: str) -> dict:
+    raw = raw.strip()
+    raw = re.sub(r'^```(?:json)?\s*', '', raw, flags=re.MULTILINE)
+    raw = re.sub(r'\s*```\s*$',       '', raw, flags=re.MULTILINE)
+    m = re.search(r'\{.*\}', raw, re.DOTALL)
+    if m:
+        raw = m.group(0)
+    return json.loads(raw)
 
 
 def _norm(s: str) -> str:
@@ -449,7 +451,7 @@ Write the letter ENTIRELY in {lang_name} script (except for proper names/IDs).
 
 PRIME DIRECTIVE:
 Use professional, formal legal vocabulary.
-If writing in Tamil, use proper formal Tamil (not conversational).
+If writing in Tamil, use proper formal Tamil (not conversational). 
 Ensure the tone is respectful yet factual.
 Do NOT use robotic or overly simplified translations.
 
@@ -494,7 +496,7 @@ Rules:
             SystemMessage(content="Legal letter writer. Plain text only. No markdown."),
             HumanMessage(content=prompt)
         ])
-        raw = strip_markdown(resp.content)
+        raw = _strip_md(resp.content)
     except Exception as e:
         print(f"[_generate_body] error: {e}")
         raw = ("I respectfully submit the following.\n\n"
@@ -649,7 +651,7 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
                        doc_type: str, facts: dict,
                        disclaimer: str = "", reference_number: str = "") -> str:
     lbl = DOC_LABELS.get(scalars.get("user_language", "en"), DOC_LABELS["en"])
-    language = scalars.get("user_language", "en")
+    if scalars.get("user_language") == "en": lbl = DOC_LABELS["en"] # fallback
 
     name     = scalars.get("full_name",    "")
     address  = scalars.get("full_address", "")
@@ -659,10 +661,11 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
     state_raw    = scalars.get("state_raw",    "")
 
     # Format date with regional day name if Tamil
-    today    = date.today()
-    day_name = TAMIL_DAYS[today.weekday()] if language == "ta" else today.strftime("%A")
-    date_str = today.strftime("%d/%m/%Y") + f" ({day_name})"
-    today_str = date_str  # sync
+    today = datetime.now()
+    day_name = today.strftime('%A')
+    if scalars.get("user_language") == "ta":
+        day_name = TAMIL_DAYS.get(day_name, day_name)
+    date_str = today.strftime(f'%d/%m/%Y ({day_name})')
 
     auth_loc   = authority_location if authority_location else "India"
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
@@ -760,11 +763,11 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
     state_raw    = scalars.get("state_raw",    "")
 
     # Format date with regional day name if Tamil
-    today    = date.today()
-    language = scalars.get("user_language", "en")
-    day_name = TAMIL_DAYS[today.weekday()] if language == "ta" else today.strftime("%A")
-    date_str = today.strftime("%d/%m/%Y") + f" ({day_name})"
-    today_str = date_str # sync
+    today = datetime.now()
+    day_name = today.strftime('%A')
+    if scalars.get("user_language") == "ta":
+        day_name = TAMIL_DAYS.get(day_name, day_name)
+    date_str = today.strftime(f'%d/%m/%Y ({day_name})')
 
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
     salutation = f"{lbl['dear']} {other_party}," if other_party else lbl['respected']
@@ -896,45 +899,28 @@ def generate_bilingual_document(intent: str, facts: dict,
         fields_to_translate = ["authority", "authority_location", "other_party", "other_party_location"]
         text_to_translate   = " | ".join(str(classification.get(f, "")) for f in fields_to_translate)
         
-        prompt = f"""You are a legal translator. Translate these Indian legal entity names and locations into formal {LANGUAGE_NAMES.get(user_language, 'Tamil')}.
-Return as a pip-separated list in the same order. 
+        prompt = f"""Translate these Indian legal entity names/locations into {LANGUAGE_NAMES.get(user_language, 'Tamil')}.
+Keep original meaning. Return as piped list.
 
-TEXT: {text_to_translate}
-
-RULES:
-- Formal vocabulary only.
-- Respond ONLY with the piped translations. No commentary.
+Text: {text_to_translate}
 """
         try:
             resp = llm.invoke([HumanMessage(content=prompt)])
-            vals = [v.strip().strip('"').strip("'") for v in resp.content.split("|")]
+            vals = [v.strip() for v in resp.content.split("|")]
             for i, f in enumerate(fields_to_translate):
-                if i < len(vals) and vals[i]: 
-                    translated_classification[f] = vals[i]
+                if i < len(vals): translated_classification[f] = vals[i]
         except Exception: pass
 
         # 2. Translate Facts to English (for the English copy)
-        # Identify non-English values in facts
-        facts_to_translate = {}
-        for k, v in facts.items():
-            if v and any(c > '\u007f' for c in str(v)): # Detect non-ASCII/Indic characters
-                facts_to_translate[k] = v
-        
+        # We only really need to translate the ones likely used in From/To or Body
+        facts_to_translate = {k: v for k, v in facts.items() if any(x in k for x in ["name", "address", "location", "details", "subject"])}
         if facts_to_translate:
-            prompt = f"""You are a professional legal translator. Translate these user-provided details into natural, formal English.
-Keep proper names accurate. Return as a JSON object with the same keys.
-
-DETAILS: {json.dumps(facts_to_translate, ensure_ascii=False)}
-
-Return valid JSON only. No markdown.
-"""
+            prompt = f"Translate these factual details into English. Return as JSON. Details: {json.dumps(facts_to_translate)}"
             try:
                 resp = llm.invoke([HumanMessage(content=prompt)])
                 trans_facts = _parse_json(strip_markdown(resp.content))
-                for k, v in trans_facts.items(): 
-                    if v: translated_facts[k] = v
-            except Exception as e:
-                print(f"[generate_bilingual_document] Reverse translation failed: {e}")
+                for k, v in trans_facts.items(): translated_facts[k] = v
+            except Exception: pass
 
     def _build(lang: str, disc: str, current_facts: dict, cur_class: dict) -> str:
         # Use lang-specific scalars and body
