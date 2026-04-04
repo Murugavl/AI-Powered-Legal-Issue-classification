@@ -350,34 +350,30 @@ function CaseWizard() {
         finally { setIsUploading(false); }
     };
 
-    // ── Voice ───────────────────────────────────
-    const handleVoiceInput = async (audioFile) => {
+    // ── Voice ───────────────────────────────────────────────────────────────
+    // Receives a plain-text string directly from SpeechRecognition (via VoiceRecorder).
+    // Processes it exactly like a typed message — no prompt, no blob upload needed.
+    const handleVoiceInput = async (recognizedText) => {
+        const text = (recognizedText || '').trim();
+        if (!text || loading) return;
+
+        // Show the transcribed text in the chat as a user message
+        addMsg('user', `🎤 ${text}`);
         setLoading(true);
-        addMsg('system', '🎤 Processing voice input...');
         try {
-            const transcript = window.prompt('Type the transcript of your voice input:');
-            if (!transcript?.trim()) { addMsg('system', 'Voice input was not submitted.'); return; }
-            const confirmed = window.prompt(`Transcript:\n${transcript}\n\nType YES to confirm.`);
-            if ((confirmed || '').trim().toUpperCase() !== 'YES') {
-                addMsg('system', 'Transcript not confirmed. Voice input cancelled.');
-                return;
+            let res;
+            if (!sessionId) {
+                res = await sessionAPI.start(text);
+                setSessionId(res.data.sessionId);
+                loadSessions();
+            } else {
+                res = await sessionAPI.answer(sessionId, text);
             }
-            const formData = new FormData();
-            formData.append('audio', audioFile);
-            formData.append('transcript', transcript.trim());
-            formData.append('language', 'en-IN');
-            formData.append('transcriptConfirmed', 'true');
-            let sid = sessionId;
-            if (!sid) {
-                const startRes = await sessionAPI.start('Voice input');
-                sid = startRes.data.sessionId;
-                setSessionId(sid);
-            }
-            const res = await sessionAPI.answerVoice(sid, formData);
             applyResponse(res.data);
-        } catch { addMsg('system', 'Error processing voice input. Please type your answer instead.'); }
-        finally {
-            setMessages(prev => prev.filter(m => m.text !== '🎤 Processing voice input...'));
+        } catch (err) {
+            console.error(err);
+            addMsg('system', "I'm sorry, I encountered an error processing your voice input. Please try again.");
+        } finally {
             setLoading(false);
         }
     };
@@ -405,7 +401,7 @@ function CaseWizard() {
         } catch { alert('Failed to delete.'); }
     };
 
-    const realEntities = Object.entries(entities).filter(([, v]) => isRealValue(v));
+    const realEntities = Object.entries(entities).filter(([k, v]) => isRealValue(v) && k !== '_language_');
 
     return (
         <div className="cw-root">
@@ -584,7 +580,11 @@ function CaseWizard() {
                             <input type="file" hidden onChange={handleFileUpload}
                                 disabled={!sessionId || isUploading} />
                         </label>
-                        <VoiceRecorder onRecordingComplete={handleVoiceInput} isProcessing={loading} />
+                        <VoiceRecorder 
+                            onRecordingComplete={handleVoiceInput} 
+                            isProcessing={loading} 
+                            language={entities._language_} 
+                        />
                         <input
                             className="cw-input"
                             type="text"

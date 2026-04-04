@@ -665,7 +665,9 @@ def _assemble_petition(scalars: dict, body_paragraphs: str, documents_list: str,
     day_name = today.strftime('%A')
     if scalars.get("user_language") == "ta":
         day_name = TAMIL_DAYS.get(day_name, day_name)
-    date_str = today.strftime(f'%d/%m/%Y ({day_name})')
+    # NOTE: Do NOT embed day_name inside strftime() format string — on Windows,
+    # strftime uses the system locale codec which cannot encode Tamil/Unicode characters.
+    date_str = today.strftime('%d/%m/%Y') + f' ({day_name})'
 
     auth_loc   = authority_location if authority_location else "India"
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
@@ -767,7 +769,9 @@ def _assemble_demand_letter(scalars: dict, body_paragraphs: str, documents_list:
     day_name = today.strftime('%A')
     if scalars.get("user_language") == "ta":
         day_name = TAMIL_DAYS.get(day_name, day_name)
-    date_str = today.strftime(f'%d/%m/%Y ({day_name})')
+    # NOTE: Do NOT embed day_name inside strftime() format string — on Windows,
+    # strftime uses the system locale codec which cannot encode Tamil/Unicode characters.
+    date_str = today.strftime('%d/%m/%Y') + f' ({day_name})'
 
     addr_clean = re.sub(r'[\s,\-\u2013\u2014]+$', '', address).strip() if address else ""
     salutation = f"{lbl['dear']} {other_party}," if other_party else lbl['respected']

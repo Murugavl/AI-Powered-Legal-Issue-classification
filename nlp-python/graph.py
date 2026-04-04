@@ -178,7 +178,10 @@ def detect_language_node(state: LegalState):
             lang = "en"
     except Exception:
         lang = "en"
-    return {"primary_language": lang}
+        
+    collected = dict(state.get("collected_facts") or {})
+    collected["_language_"] = lang
+    return {"primary_language": lang, "collected_facts": collected}
 
 
 # ============================================================
